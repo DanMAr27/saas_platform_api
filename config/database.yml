@@ -16,7 +16,17 @@ test:
   database: <%= ENV.fetch("TEST_DATABASE_NAME", "saas_platform_test") %>
 
 production:
-  <<: *default
-  database: <%= ENV.fetch("DATABASE_NAME") %>
-  username: <%= ENV.fetch("DATABASE_USERNAME") %>
-  password: <%= ENV.fetch("DATABASE_PASSWORD") %>
+ 
+
+  # <<: *default (Mantén esta línea si *default contiene otras configuraciones útiles)
+  <<: *default 
+  # database: <%= ENV.fetch("DATABASE_NAME") %>
+  # username: <%= ENV.fetch("DATABASE_USERNAME") %>
+  # password: <%= ENV.fetch("DATABASE_PASSWORD") %>
+  
+  # Esta es la línea crucial: le dice a Rails que use la URL completa
+  # que Render inyecta en la variable DATABASE_URL.
+  url: <%= ENV.fetch("DATABASE_URL") %>
+
+  # Opcional, solo si necesitas configurar el pool de conexiones:
+  # pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
