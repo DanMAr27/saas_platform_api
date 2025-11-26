@@ -354,6 +354,10 @@ GEM
     ruby-progressbar (1.13.0)
     ruby2_keywords (0.0.5)
     securerandom (0.4.1)
+    solid_cache (1.0.10)
+      activejob (>= 7.2)
+      activerecord (>= 7.2)
+      railties (>= 7.2)
     solid_queue (1.2.4)
       activejob (>= 7.1)
       activerecord (>= 7.1)
@@ -429,7 +433,8 @@ DEPENDENCIES
   rails-i18n
   route_translator
   rubocop-rails-omakase
-  solid_queue
+  solid_cache (~> 1.0.10)
+  solid_queue (~> 1.2.4)
   sprockets-rails
   tzinfo-data
 
