@@ -35,7 +35,7 @@ gem "ancestry", "~> 4.3" # Árboles jerárquicos (nodos organizacionales)
 gem "rails-i18n"
 gem "i18n-tasks", group: :development
 gem "route_translator"
-gem "mobility"
+gem "mobility", "~> 1.3.2"
 
 # ============================================
 # AUDITORÍA Y SOFT DELETES
