@@ -16,5 +16,9 @@ test:
   database: <%= ENV.fetch("TEST_DATABASE_NAME", "saas_platform_test") %>
 
 production:
-  <<: *default 
-  url: <%= ENV.fetch("DATABASE_URL") %>
+  primary:
+    <<: *default 
+    url: <%= ENV.fetch("DATABASE_URL") %>
+  cache:
+    <<: *default
+    url: <%= ENV.fetch("DATABASE_URL") %> 
