@@ -19,6 +19,4 @@ production:
   primary:
     <<: *default 
     url: <%= ENV.fetch("DATABASE_URL") %>
-  cache:
-    <<: *default
-    url: <%= ENV.fetch("DATABASE_URL") %> 
+
