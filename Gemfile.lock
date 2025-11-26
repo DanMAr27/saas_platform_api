@@ -405,7 +405,7 @@ DEPENDENCIES
   grape-swagger-rails (~> 0.7)
   i18n-tasks
   kaminari
-  mobility
+  mobility (~> 1.3.2)
   paper_trail (~> 16.0)
   pg (~> 1.5)
   pry-rails
