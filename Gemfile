@@ -3,7 +3,7 @@ source "https://rubygems.org"
 # ruby "3.3.0" # O la versión de Ruby que estés usando
 
 # Core Rails
-gem "rails", "~> 8.0.3"
+gem "rails", "~> 8.1.1"
 gem "pg", "~> 1.5" # PostgreSQL adapter
 
 # Servidor de aplicación
