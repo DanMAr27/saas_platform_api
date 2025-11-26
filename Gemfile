@@ -86,3 +86,5 @@ group :development do
   # Anotaciones de esquema en modelos
   # gem "annotate", "~> 3.2"
 end
+
+gem "dockerfile-rails", ">= 1.7", :group => :development
