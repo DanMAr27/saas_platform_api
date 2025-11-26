@@ -32,7 +32,7 @@ Rails.application.configure do
   config.active_support.report_deprecations = false
 
   # Cache store
-  config.cache_store = :solid_cache_store
+  config.cache_store = :memory_store
 
   # Active Job: usar inline para producción simple en Render
   # o puedes cambiar por :async si prefieres background threads

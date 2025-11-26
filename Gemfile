@@ -66,7 +66,7 @@ gem "kaminari"
 gem "sprockets-rails"
 # gem "solid_queue", "~> 1.2.4"
 # gem "solid_cache", "~> 1.0.10"
-gem "solid_cache_store"
+
 
 
 
