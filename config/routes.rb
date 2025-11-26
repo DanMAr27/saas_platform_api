@@ -10,7 +10,7 @@ Rails.application.routes.draw do
 
   # Montar la UI de Swagger (documentación interactiva)
   # Accesible en: http://localhost:3000/apidoc
-  mount GrapeSwaggerRails::Engine => "/apidoc"
+  mount GrapeSwaggerRails::Engine => "rails "
 
   # Health check route (fuera de la API para monitoreo)
   # Útil para load balancers y herramientas de monitoreo
