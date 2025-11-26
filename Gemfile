@@ -64,6 +64,7 @@ gem "aasm", "~> 5.5.1" # Manejo de maquina de estados
 
 gem "kaminari"
 gem "sprockets-rails"
+gem "solid_queue"
 
 group :development, :test do
   # Debugging
