@@ -1,0 +1,2273 @@
+# frozen_string_literal: true
+
+# Migración para la tabla de versiones de PaperTrail
+# Esta tabla almacena el historial completo de cambios en los modelos auditados
+#
+# Generar con: rails generate paper_trail:install
+# O crear manualmente como se muestra aquí
+
+class CreateVersions < ActiveRecord::Migration[8.0]
+  # Esta migración es compatible con todas las versiones de PaperTrail
+  TEXT_BYTES = 1_073_741_823 # Máximo para PostgreSQL text column
+
+  def change
+    create_table :versions do |t|
+      # Información del modelo versionado
+      t.string   :item_type, null: false, index: true
+      t.bigint   :item_id,   null: false, index: true
+
+      # Tipo de evento (create, update, destroy)
+      t.string   :event, null: false
+
+      # Usuario que realizó el cambio (whodunnit)
+      # Guardamos como string para flexibilidad (puede ser ID o email)
+      t.string   :whodunnit
+
+      # Estado del objeto (serializado en JSON)
+      # - object: estado anterior (antes del cambio)
+      # - object_changes: qué cambió específicamente
+      t.jsonb    :object
+      t.jsonb    :object_changes
+
+      # Metadata adicional del contexto
+      # Aquí guardaremos: tenant_id, ip_address, user_agent, etc.
+      t.jsonb    :metadata
+
+      # Timestamp del cambio
+      t.datetime :created_at, null: false
+    end
+
+    # Índices para mejorar performance de queries
+
+    # Índice compuesto para buscar versiones de un item específico
+    add_index :versions, [ :item_type, :item_id ],
+              name: 'index_versions_on_item_type_and_item_id'
+
+    # Índice para buscar por usuario
+    add_index :versions, :whodunnit,
+              name: 'index_versions_on_whodunnit'
+
+    # Índice para buscar por tipo de evento
+    add_index :versions, :event,
+              name: 'index_versions_on_event'
+
+    # Índice para buscar por fecha
+    add_index :versions, :created_at,
+              name: 'index_versions_on_created_at'
+
+    # Índice GIN para búsquedas en JSONB (PostgreSQL)
+    # Permite búsquedas eficientes en metadata
+    add_index :versions, :metadata,
+              using: :gin,
+              name: 'index_versions_on_metadata'
+
+    # Índice para tenant_id en metadata (multitenancy)
+    # Esto permite filtrar versiones por tenant de forma eficiente
+    add_index :versions, "(metadata->>'tenant_id')",
+              name: 'index_versions_on_tenant_id'
+  end
+end
+# frozen_string_literal: true
+
+# Migración para crear la tabla de usuarios
+# Incluye todos los campos de Devise más campos personalizados
+# Esta tabla es la identidad base de TODO el sistema (platform y tenant users)
+
+class CreateUsers < ActiveRecord::Migration[8.0]
+  def change
+    create_table :users do |t|
+      # ============================================
+      # DEVISE: Database Authenticatable
+      # ============================================
+      t.string :email, null: false, default: ""
+      t.string :encrypted_password, null: false, default: ""
+
+      # ============================================
+      # DEVISE: Recoverable
+      # ============================================
+      t.string   :reset_password_token
+      t.datetime :reset_password_sent_at
+
+      # ============================================
+      # DEVISE: Rememberable
+      # ============================================
+      t.datetime :remember_created_at
+
+      # ============================================
+      # DEVISE: Trackable
+      # ============================================
+      t.integer  :sign_in_count, default: 0, null: false
+      t.datetime :current_sign_in_at
+      t.datetime :last_sign_in_at
+      t.string   :current_sign_in_ip
+      t.string   :last_sign_in_ip
+
+      # ============================================
+      # DEVISE: Lockable
+      # ============================================
+      t.integer  :failed_attempts, default: 0, null: false
+      t.string   :unlock_token
+      t.datetime :locked_at
+
+      # ============================================
+      # CAMPOS PERSONALIZADOS
+      # ============================================
+
+      # Información personal
+      t.string :first_name, limit: 100, null: false
+      t.string :last_name, limit: 100, null: false
+      t.string :phone, limit: 20
+      t.string :avatar_url, limit: 500
+
+      # Verificación de email
+      t.datetime :email_verified_at
+
+      # Sistema de invitaciones
+      t.string :invitation_token, limit: 64
+      t.datetime :invitation_expires_at
+      t.datetime :invitation_accepted_at
+      t.bigint :invited_by_id # FK a users.id
+
+      # Último login (adicional a Devise trackable)
+      t.datetime :last_login_at
+
+      # ============================================
+      # SOFT DELETE
+      # ============================================
+      t.datetime :deleted_at
+      t.bigint :deleted_by # FK a users.id
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Email único (principal método de login)
+    add_index :users, :email, unique: true, name: 'index_users_on_email'
+
+    # Índices de Devise
+    add_index :users, :reset_password_token, unique: true, name: 'index_users_on_reset_password_token'
+    add_index :users, :unlock_token, unique: true, name: 'index_users_on_unlock_token'
+
+    # Invitaciones
+    add_index :users, :invitation_token, unique: true, name: 'index_users_on_invitation_token'
+    add_index :users, :invited_by_id, name: 'index_users_on_invited_by_id'
+
+    # Soft delete (para queries de usuarios activos)
+    add_index :users, :deleted_at, name: 'index_users_on_deleted_at'
+
+    # Búsquedas por nombre
+    add_index :users, [ :first_name, :last_name ], name: 'index_users_on_first_name_and_last_name'
+
+    # Email verificado (para filtrar usuarios verificados)
+    add_index :users, :email_verified_at, name: 'index_users_on_email_verified_at'
+  end
+end
+# frozen_string_literal: true
+
+# Migración para crear la tabla de usuarios
+# Incluye todos los campos de Devise más campos personalizados
+# Esta tabla es la identidad base de TODO el sistema (platform y tenant users)
+
+class CreateUsers < ActiveRecord::Migration[8.0]
+  def change
+    create_table :users do |t|
+      # ============================================
+      # DEVISE: Database Authenticatable
+      # ============================================
+      t.string :email, null: false, default: ""
+      t.string :encrypted_password, null: false, default: ""
+
+      # ============================================
+      # DEVISE: Recoverable
+      # ============================================
+      t.string   :reset_password_token
+      t.datetime :reset_password_sent_at
+
+      # ============================================
+      # DEVISE: Rememberable
+      # ============================================
+      t.datetime :remember_created_at
+
+      # ============================================
+      # DEVISE: Trackable
+      # ============================================
+      t.integer  :sign_in_count, default: 0, null: false
+      t.datetime :current_sign_in_at
+      t.datetime :last_sign_in_at
+      t.string   :current_sign_in_ip
+      t.string   :last_sign_in_ip
+
+      # ============================================
+      # DEVISE: Lockable
+      # ============================================
+      t.integer  :failed_attempts, default: 0, null: false
+      t.string   :unlock_token
+      t.datetime :locked_at
+
+      # ============================================
+      # CAMPOS PERSONALIZADOS
+      # ============================================
+
+      # Información personal
+      t.string :first_name, limit: 100, null: false
+      t.string :last_name, limit: 100, null: false
+      t.string :phone, limit: 20
+      t.string :avatar_url, limit: 500
+
+      # Verificación de email
+      t.datetime :email_verified_at
+
+      # Sistema de invitaciones
+      t.string :invitation_token, limit: 64
+      t.datetime :invitation_expires_at
+      t.datetime :invitation_accepted_at
+      t.bigint :invited_by_id # FK a users.id
+
+      # Último login (adicional a Devise trackable)
+      t.datetime :last_login_at
+
+      # ============================================
+      # SOFT DELETE
+      # ============================================
+      t.datetime :deleted_at
+      t.bigint :deleted_by # FK a users.id
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Email único (principal método de login)
+    add_index :users, :email, unique: true, name: 'index_users_on_email'
+
+    # Índices de Devise
+    add_index :users, :reset_password_token, unique: true, name: 'index_users_on_reset_password_token'
+    add_index :users, :unlock_token, unique: true, name: 'index_users_on_unlock_token'
+
+    # Invitaciones
+    add_index :users, :invitation_token, unique: true, name: 'index_users_on_invitation_token'
+    add_index :users, :invited_by_id, name: 'index_users_on_invited_by_id'
+
+    # Soft delete (para queries de usuarios activos)
+    add_index :users, :deleted_at, name: 'index_users_on_deleted_at'
+
+    # Búsquedas por nombre
+    add_index :users, [ :first_name, :last_name ], name: 'index_users_on_first_name_and_last_name'
+
+    # Email verificado (para filtrar usuarios verificados)
+    add_index :users, :email_verified_at, name: 'index_users_on_email_verified_at'
+  end
+end
+# frozen_string_literal: true
+
+# Migración para la lista negra de tokens JWT (revocación)
+# Cuando un usuario hace logout, su token se agrega aquí para invalidarlo
+
+class CreateJwtBlacklist < ActiveRecord::Migration[8.0]
+  def change
+    create_table :jwt_blacklists do |t|
+      # JTI (JWT ID) - Identificador único del token
+      t.string :jti, null: false
+
+      # Usuario al que pertenece el token
+      t.bigint :user_id, null: false
+
+      # Cuándo expira el token (para limpieza automática)
+      t.datetime :exp, null: false
+
+      # Timestamp de creación
+      t.datetime :created_at, null: false
+    end
+
+    # Índices
+    add_index :jwt_blacklists, :jti, unique: true, name: 'index_jwt_blacklist_on_jti'
+    add_index :jwt_blacklists, :user_id, name: 'index_jwt_blacklist_on_user_id'
+    add_index :jwt_blacklists, :exp, name: 'index_jwt_blacklist_on_exp'
+
+    # FK a users
+    add_foreign_key :jwt_blacklists, :users, column: :user_id, on_delete: :cascade
+  end
+end
+# frozen_string_literal: true
+
+# Migración para crear la tabla de Tenants (organizaciones/clientes)
+# Cada tenant es un espacio aislado con sus propios datos
+
+class CreateTenants < ActiveRecord::Migration[8.0]
+  def change
+    create_table :tenants do |t|
+      # ============================================
+      # IDENTIFICACIÓN
+      # ============================================
+      t.string :name, null: false, limit: 255
+      t.string :slug, null: false, limit: 100
+      t.string :domain, limit: 255
+
+      # ============================================
+      # INFORMACIÓN LEGAL
+      # ============================================
+      t.string :legal_name, limit: 255
+      t.string :tax_id, limit: 50
+      t.text :address
+      t.string :city, limit: 100
+      t.string :state, limit: 100
+      t.string :postal_code, limit: 20
+      t.string :country, limit: 2, default: 'ES' # ISO 3166-1 alpha-2
+
+      # ============================================
+      # CONFIGURACIÓN
+      # ============================================
+      t.string :timezone, limit: 50, default: 'Europe/Madrid'
+      t.string :locale, limit: 10, default: 'es'
+      t.string :currency, limit: 3, default: 'EUR' # ISO 4217
+
+      # ============================================
+      # ESTADO Y BILLING
+      # ============================================
+      # Estados: active, suspended, trial, cancelled
+      t.string :status, limit: 20, null: false, default: 'trial'
+      t.date :trial_ends_at
+      t.date :subscription_starts_at
+      t.date :subscription_ends_at
+
+      # Plan/tier (basic, professional, enterprise)
+      t.string :plan, limit: 50, default: 'trial'
+
+      # Límites según el plan
+      t.integer :max_users, default: 5
+      t.integer :max_storage_gb, default: 10
+
+      # ============================================
+      # METADATA Y CONFIGURACIÓN
+      # ============================================
+      t.jsonb :settings, default: {}
+      t.jsonb :metadata, default: {}
+
+      # ============================================
+      # AUDITORÍA
+      # ============================================
+      t.bigint :created_by # FK a users.id
+      t.datetime :deleted_at
+      t.bigint :deleted_by # FK a users.id
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Slug único (para URLs amigables)
+    add_index :tenants, :slug, unique: true, name: 'index_tenants_on_slug'
+
+    # Dominio único si se usa
+    add_index :tenants, :domain, unique: true, name: 'index_tenants_on_domain', where: 'domain IS NOT NULL'
+
+    # Estado (para filtrar por activos/suspendidos)
+    add_index :tenants, :status, name: 'index_tenants_on_status'
+
+    # Soft delete
+    add_index :tenants, :deleted_at, name: 'index_tenants_on_deleted_at'
+
+    # Búsqueda por nombre
+    add_index :tenants, :name, name: 'index_tenants_on_name'
+
+    # Índice GIN para búsquedas en JSONB
+    add_index :tenants, :settings, using: :gin, name: 'index_tenants_on_settings'
+    add_index :tenants, :metadata, using: :gin, name: 'index_tenants_on_metadata'
+
+    # Creador
+    add_index :tenants, :created_by, name: 'index_tenants_on_created_by'
+
+    # ============================================
+    # FOREIGN KEYS
+    # ============================================
+    add_foreign_key :tenants, :users, column: :created_by, on_delete: :nullify
+  end
+end
+# frozen_string_literal: true
+
+# Migración para la relación User ↔ Tenant ↔ Role
+# Permite que un usuario pertenezca a múltiples tenants con diferentes roles
+
+class CreateTenantMemberships < ActiveRecord::Migration[8.0]
+  def change
+    create_table :tenant_memberships do |t|
+      # ============================================
+      # RELACIONES
+      # ============================================
+      t.bigint :user_id, null: false
+      t.bigint :tenant_id, null: false
+
+      # Rol del usuario en este tenant (por ahora como string, en Fase 3 será FK)
+      # Roles: 'admin', 'manager', 'driver'
+      t.string :role, null: false, limit: 50, default: 'driver'
+
+      # ============================================
+      # METADATA DE LA MEMBRESÍA
+      # ============================================
+
+      # ¿Es el admin principal del tenant? (solo puede haber uno)
+      t.boolean :is_primary_admin, default: false, null: false
+
+      # Estado de la membresía: active, suspended, invited
+      t.string :status, limit: 20, null: false, default: 'invited'
+
+      # Token de invitación (si aplica)
+      t.string :invitation_token, limit: 64
+      t.datetime :invitation_sent_at
+      t.datetime :invitation_accepted_at
+
+      # ¿Es el tenant por defecto para este usuario?
+      t.boolean :is_default, default: false, null: false
+
+      # ============================================
+      # AUDITORÍA
+      # ============================================
+      t.bigint :created_by # FK a users.id - quien creó la membresía
+      t.datetime :deleted_at
+      t.bigint :deleted_by # FK a users.id
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Combinación única: un usuario no puede tener el mismo rol dos veces en un tenant
+    add_index :tenant_memberships,
+              [ :user_id, :tenant_id, :role ],
+              unique: true,
+              name: 'index_tenant_memberships_on_user_tenant_role',
+              where: 'deleted_at IS NULL'
+
+    # Buscar membresías por usuario
+    add_index :tenant_memberships, :user_id, name: 'index_tenant_memberships_on_user_id'
+
+    # Buscar membresías por tenant
+    add_index :tenant_memberships, :tenant_id, name: 'index_tenant_memberships_on_tenant_id'
+
+    # Solo puede haber un primary admin por tenant
+    add_index :tenant_memberships,
+              [ :tenant_id, :is_primary_admin ],
+              unique: true,
+              name: 'index_tenant_memberships_on_tenant_primary_admin',
+              where: 'is_primary_admin = true AND deleted_at IS NULL'
+
+    # Buscar por estado
+    add_index :tenant_memberships, :status, name: 'index_tenant_memberships_on_status'
+
+    # Soft delete
+    add_index :tenant_memberships, :deleted_at, name: 'index_tenant_memberships_on_deleted_at'
+
+    # Token de invitación
+    add_index :tenant_memberships,
+              :invitation_token,
+              unique: true,
+              name: 'index_tenant_memberships_on_invitation_token',
+              where: 'invitation_token IS NOT NULL'
+
+    # ============================================
+    # FOREIGN KEYS
+    # ============================================
+    add_foreign_key :tenant_memberships, :users, column: :user_id, on_delete: :cascade
+    add_foreign_key :tenant_memberships, :tenants, column: :tenant_id, on_delete: :cascade
+    add_foreign_key :tenant_memberships, :users, column: :created_by, on_delete: :nullify
+  end
+end
+# frozen_string_literal: true
+
+# Migración para crear la tabla de Roles
+# Catálogo único de roles para todos los contextos (platform, tenant)
+
+class CreateRoles < ActiveRecord::Migration[8.0]
+  def change
+    create_table :roles do |t|
+      # ============================================
+      # IDENTIFICACIÓN
+      # ============================================
+      t.string :name, null: false, limit: 100
+      t.string :slug, null: false, limit: 100
+      t.text :description
+
+      # ============================================
+      # CONTEXTO
+      # ============================================
+      # Contexto: 'platform', 'tenant'
+      t.string :context, null: false, limit: 20
+
+      # ============================================
+      # CONFIGURACIÓN
+      # ============================================
+      # ¿Requiere scopes adicionales? (ej: nodos, vehículos)
+      t.boolean :requires_scope, default: false, null: false
+
+      # ¿Es un rol del sistema? (no se puede borrar)
+      t.boolean :is_system, default: false, null: false
+
+      # Nivel de prioridad (para ordenar roles)
+      t.integer :priority, default: 0, null: false
+
+      # ============================================
+      # METADATA
+      # ============================================
+      t.jsonb :settings, default: {}
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Slug único
+    add_index :roles, :slug, unique: true, name: 'index_roles_on_slug'
+
+    # Búsqueda por contexto
+    add_index :roles, :context, name: 'index_roles_on_context'
+
+    # Solo roles del sistema
+    add_index :roles, :is_system, name: 'index_roles_on_is_system'
+
+    # Ordenar por prioridad
+    add_index :roles, :priority, name: 'index_roles_on_priority'
+
+    # Índice GIN para settings
+    add_index :roles, :settings, using: :gin, name: 'index_roles_on_settings'
+  end
+end
+# frozen_string_literal: true
+
+# Migración para Platform Memberships
+# Usuarios con acceso de nivel plataforma (SuperAdmin, Support)
+
+class CreatePlatformMemberships < ActiveRecord::Migration[8.0]
+  def change
+    create_table :platform_memberships do |t|
+      # ============================================
+      # RELACIONES
+      # ============================================
+      t.bigint :user_id, null: false
+      t.bigint :role_id, null: false
+
+      # ============================================
+      # CONFIGURACIÓN
+      # ============================================
+
+      # Contexto (siempre 'platform' para esta tabla)
+      t.string :context, null: false, default: 'platform', limit: 20
+
+      # MFA obligatorio para acceso de plataforma
+      t.boolean :mfa_enabled, default: false, null: false
+      t.datetime :mfa_configured_at
+
+      # Capacidad de impersonar usuarios (solo SupportAdmin)
+      t.boolean :can_impersonate, default: false, null: false
+
+      # Última vez que impersonó a alguien
+      t.datetime :last_impersonation_at
+
+      # IP permitidas (opcional, para mayor seguridad)
+      t.jsonb :allowed_ips, default: []
+
+      # ============================================
+      # AUDITORÍA
+      # ============================================
+      t.bigint :created_by # FK a users.id
+      t.datetime :deleted_at
+      t.bigint :deleted_by
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Un usuario solo puede tener una platform membership
+    add_index :platform_memberships,
+              :user_id,
+              unique: true,
+              name: 'index_platform_memberships_on_user_id',
+              where: 'deleted_at IS NULL'
+
+    # Búsqueda por rol
+    add_index :platform_memberships, :role_id, name: 'index_platform_memberships_on_role_id'
+
+    # Soft delete
+    add_index :platform_memberships, :deleted_at, name: 'index_platform_memberships_on_deleted_at'
+
+    # MFA habilitado
+    add_index :platform_memberships, :mfa_enabled, name: 'index_platform_memberships_on_mfa_enabled'
+
+    # ============================================
+    # FOREIGN KEYS
+    # ============================================
+    add_foreign_key :platform_memberships, :users, column: :user_id, on_delete: :cascade
+    add_foreign_key :platform_memberships, :roles, column: :role_id, on_delete: :restrict
+    add_foreign_key :platform_memberships, :users, column: :created_by, on_delete: :nullify
+  end
+end
+# frozen_string_literal: true
+
+# Migración para actualizar TenantMemberships con role_id
+# Mantiene la columna 'role' como string por compatibilidad
+# y agrega role_id como FK a la tabla roles
+
+class UpdateTenantMembershipsWithRoleId < ActiveRecord::Migration[8.0]
+  def change
+    # Agregar columna role_id
+    add_column :tenant_memberships, :role_id, :bigint
+
+    # Agregar índice
+    add_index :tenant_memberships, :role_id, name: 'index_tenant_memberships_on_role_id'
+
+    # Agregar foreign key
+    add_foreign_key :tenant_memberships, :roles, column: :role_id, on_delete: :restrict
+
+    # Nota: No eliminamos la columna 'role' (string) para mantener compatibilidad
+    # En el futuro, una vez migrados todos los datos, se puede eliminar
+    # con otra migración
+  end
+end
+
+# frozen_string_literal: true
+
+module Auditable
+  extend ActiveSupport::Concern
+
+  included do
+    # Habilitar PaperTrail en el modelo
+    has_paper_trail(
+      # Eventos que se registran
+      on: %i[create update destroy],
+
+      # Campos que NO se versionan (típicamente timestamps automáticos)
+      ignore: %i[updated_at created_at],
+
+      # Configuración de versionado
+      versions: {
+        class_name: "PaperTrail::Version",
+        dependent: :destroy
+      }
+    )
+  end
+
+  # Métodos de instancia
+  module InstanceMethods
+    # Obtener todas las versiones del registro
+    def audit_log
+      versions.order(created_at: :desc)
+    end
+
+    # Obtener la última modificación
+    def last_modification
+      versions.last
+    end
+
+    # Obtener quién creó el registro
+    def created_by_user
+      return nil unless versions.any?
+
+      User.find_by(id: versions.first.whodunnit)
+    end
+
+    # Obtener quién modificó el registro por última vez
+    def last_modified_by_user
+      return nil unless versions.any?
+
+      User.find_by(id: versions.last.whodunnit)
+    end
+
+    # Verificar si el registro ha sido modificado
+    def modified?
+      versions.count > 1
+    end
+
+    # Obtener resumen de cambios para auditoría
+    def audit_summary
+      {
+        created_at: created_at,
+        created_by: created_by_user&.email,
+        updated_at: updated_at,
+        last_modified_by: last_modified_by_user&.email,
+        total_changes: versions.count,
+        last_change: last_modification&.created_at
+      }
+    end
+  end
+
+  # Métodos de clase
+  module ClassMethods
+    # Obtener todas las versiones de todos los registros de este modelo
+    def audit_trail(limit: 100)
+      PaperTrail::Version
+        .where(item_type: name)
+        .order(created_at: :desc)
+        .limit(limit)
+    end
+
+    # Obtener cambios recientes (últimas X horas)
+    def recent_changes(hours: 24)
+      PaperTrail::Version
+        .where(item_type: name)
+        .where("created_at > ?", hours.hours.ago)
+        .order(created_at: :desc)
+    end
+
+    # Obtener cambios por usuario
+    def changes_by_user(user_id)
+      PaperTrail::Version
+        .where(item_type: name, whodunnit: user_id.to_s)
+        .order(created_at: :desc)
+    end
+  end
+
+  # Incluir los métodos
+  include InstanceMethods
+  extend ClassMethods
+end
+
+# frozen_string_literal: true
+
+# Concern para Soft Delete usando gem 'discard'
+# Permite "eliminar" registros sin borrarlos físicamente de la BD
+#
+# Uso:
+#   class User < ApplicationRecord
+#     include SoftDeletable
+#   end
+#
+#   user.discard  # Soft delete
+#   user.undiscard # Restaurar
+#   User.kept # Solo registros no eliminados
+#   User.discarded # Solo registros eliminados
+#
+# Características:
+# - Usa deleted_at para marcar registros eliminados
+# - Guarda deleted_by para auditoría
+# - Proporciona scopes automáticos (kept, discarded)
+# - Integración con PaperTrail para registrar eliminación
+
+module SoftDeletable
+  extend ActiveSupport::Concern
+
+  included do
+    # Habilitar discard (soft delete)
+    include Discard::Model
+    self.discard_column = :deleted_at
+
+    # Validación: no permitir operaciones en registros eliminados
+    # (a menos que se use unscoped)
+    validate :prevent_operations_on_discarded, unless: :new_record?
+
+    # Callback antes de discard para guardar quién eliminó
+    before_discard :set_deleted_by
+
+    # Callback antes de undiscard para limpiar deleted_by
+    before_undiscard :clear_deleted_by
+  end
+
+  # Métodos de instancia
+  module InstanceMethods
+    # Soft delete con usuario que realiza la acción
+    def discard_by(user)
+      update_column(:deleted_by, user&.id) if respond_to?(:deleted_by)
+      discard
+    end
+
+    # Restaurar registro eliminado
+    def restore
+      undiscard
+    end
+
+    # Verificar si está eliminado
+    def deleted?
+      discarded?
+    end
+
+    # Obtener usuario que eliminó el registro
+    def deleted_by_user
+      return nil unless respond_to?(:deleted_by) && deleted_by.present?
+
+      User.unscoped.find_by(id: deleted_by)
+    end
+
+    # Información de eliminación para auditoría
+    def deletion_info
+      return nil unless deleted?
+
+      {
+        deleted_at: deleted_at,
+        deleted_by: deleted_by_user&.email,
+        can_restore: true
+      }
+    end
+
+    private
+
+    # Callback: guardar quién eliminó
+    def set_deleted_by
+      # Se setea desde el servicio usando current_user
+      if respond_to?(:deleted_by=) && PaperTrail.request.whodunnit.present?
+        self.deleted_by = PaperTrail.request.whodunnit
+      end
+    end
+
+    # Callback: limpiar deleted_by al restaurar
+    def clear_deleted_by
+      self.deleted_by = nil if respond_to?(:deleted_by=)
+    end
+
+    # Validación: prevenir modificaciones en registros eliminados
+    def prevent_operations_on_discarded
+      if discarded? && !changes.keys.include?("deleted_at")
+        errors.add(:base, "Cannot modify a deleted record")
+      end
+    end
+  end
+
+  # Métodos de clase
+  module ClassMethods
+    # Scope para obtener solo registros activos (alias de kept)
+    def active
+      kept
+    end
+
+    # Scope para obtener registros eliminados recientemente (últimas 24h)
+    def recently_deleted(hours: 24)
+      discarded.where("deleted_at > ?", hours.hours.ago)
+    end
+
+    # Restaurar múltiples registros
+    def restore_all(ids)
+      unscoped.where(id: ids).update_all(
+        deleted_at: nil,
+        deleted_by: nil
+      )
+    end
+
+    # Eliminar permanentemente registros que fueron eliminados hace mucho tiempo
+    # CUIDADO: Esto elimina físicamente de la BD
+    def purge_deleted_older_than(days:)
+      discarded
+        .where("deleted_at < ?", days.days.ago)
+        .destroy_all
+    end
+  end
+
+  # Incluir los métodos
+  include InstanceMethods
+  extend ClassMethods
+end
+
+# frozen_string_literal: true
+
+# Concern para modelos con scope de Tenant (multitenancy)
+# Automáticamente filtra registros por tenant_id usando ActsAsTenant
+#
+# Uso:
+#   class Vehicle < ApplicationRecord
+#     include Tenantable
+#   end
+#
+# Automáticamente:
+# - Filtra por tenant_id en queries
+# - Valida que tenant_id esté presente
+# - Asigna tenant_id automáticamente al crear
+#
+# Características:
+# - Integración con ActsAsTenant
+# - Validaciones automáticas
+# - Scopes útiles para queries cross-tenant (solo para admins)
+
+module Tenantable
+  extend ActiveSupport::Concern
+
+  included do
+    # Habilitar ActsAsTenant en el modelo
+    acts_as_tenant(:tenant)
+
+    # Relación con Tenant
+    belongs_to :tenant, optional: false
+
+    # Validaciones
+    validates :tenant_id, presence: true, unless: -> { skip_tenant_validation? }
+
+    # Callback antes de validación para asignar tenant actual
+    before_validation :set_current_tenant, on: :create, if: -> { tenant_id.blank? }
+
+    # Índice recomendado (agregar en migración)
+    # add_index :table_name, :tenant_id
+  end
+
+  # Métodos de instancia
+  module InstanceMethods
+    # Verificar si el registro pertenece al tenant actual
+    def belongs_to_current_tenant?
+      tenant_id == ActsAsTenant.current_tenant&.id
+    end
+
+    # Verificar si el registro pertenece a un tenant específico
+    def belongs_to_tenant?(tenant_or_id)
+      tenant_id_to_check = tenant_or_id.is_a?(Tenant) ? tenant_or_id.id : tenant_or_id
+      tenant_id == tenant_id_to_check
+    end
+
+    # Obtener el tenant del registro (con cache)
+    def current_tenant
+      tenant
+    end
+
+    private
+
+    # Asignar el tenant actual automáticamente
+    def set_current_tenant
+      self.tenant_id = ActsAsTenant.current_tenant&.id if ActsAsTenant.current_tenant.present?
+    end
+
+    # Permitir skip de validación en casos específicos (ej: seeds, migrations)
+    def skip_tenant_validation?
+      # En tests o seeds podemos querer skipear la validación
+      Rails.env.test? && ActsAsTenant.current_tenant.blank?
+    end
+  end
+
+  # Métodos de clase
+  module ClassMethods
+    # Ejecutar query en contexto de un tenant específico
+    # Uso: Vehicle.in_tenant(tenant) { Vehicle.all }
+    def in_tenant(tenant)
+      ActsAsTenant.with_tenant(tenant) do
+        yield
+      end
+    end
+
+    # Obtener registros de todos los tenants (solo para SuperAdmin)
+    # CUIDADO: Esto omite el filtrado automático de tenant
+    def cross_tenant
+      unscoped
+    end
+
+    # Obtener registros de múltiples tenants específicos
+    def for_tenants(*tenant_ids)
+      unscoped.where(tenant_id: tenant_ids.flatten)
+    end
+
+    # Contar registros por tenant
+    def count_by_tenant
+      unscoped.group(:tenant_id).count
+    end
+
+    # Verificar si un tenant tiene registros
+    def tenant_has_records?(tenant_or_id)
+      tenant_id_to_check = tenant_or_id.is_a?(Tenant) ? tenant_or_id.id : tenant_or_id
+      unscoped.exists?(tenant_id: tenant_id_to_check)
+    end
+
+    # Estadísticas por tenant (útil para dashboards de admin)
+    def tenant_stats
+      unscoped
+        .group(:tenant_id)
+        .select("tenant_id, COUNT(*) as count, MAX(created_at) as last_created")
+    end
+  end
+
+  # Incluir los métodos
+  include InstanceMethods
+  extend ClassMethods
+
+  # Validaciones adicionales a nivel de concern
+  class_methods do
+    # Validar que no se cambie el tenant_id después de crear
+    def prevent_tenant_id_change
+      validate :tenant_id_cannot_change, on: :update
+    end
+  end
+
+  private
+
+  # Validación: prevenir cambio de tenant_id
+  def tenant_id_cannot_change
+    if tenant_id_changed? && persisted?
+      errors.add(:tenant_id, "cannot be changed after creation")
+    end
+  end
+end
+
+# frozen_string_literal: true
+
+# Modelo para la lista negra de tokens JWT
+# Implementa la estrategia de revocación de Devise JWT
+# Cuando un usuario hace logout, su token se agrega aquí
+
+class JwtBlacklist < ApplicationRecord
+  include Devise::JWT::RevocationStrategies::Denylist
+
+  # Relación con User
+  belongs_to :user
+
+  # Validaciones
+  validates :jti, presence: true, uniqueness: true
+  validates :exp, presence: true
+
+  # Scopes
+  scope :expired, -> { where("exp < ?", Time.current) }
+  scope :active, -> { where("exp >= ?", Time.current) }
+  scope :for_user, ->(user_id) { where(user_id: user_id) }
+
+  # ============================================
+  # DEVISE JWT REVOCATION STRATEGY
+  # ============================================
+
+  # Revocar un token (agregar a blacklist)
+  def self.jwt_revoked?(payload, user)
+    # Verificar si el JTI está en la blacklist
+    exists?(jti: payload["jti"])
+  end
+
+  # Agregar token a la blacklist
+  def self.revoke_jwt(payload, user)
+    create!(
+      jti: payload["jti"],
+      user_id: user.id,
+      exp: Time.at(payload["exp"].to_i)
+    )
+  end
+
+  # ============================================
+  # MÉTODOS DE CLASE
+  # ============================================
+
+  class << self
+    # Limpiar tokens expirados (para ejecutar en cron job)
+    def cleanup_expired!
+      expired.delete_all
+    end
+
+    # Revocar todos los tokens de un usuario
+    def revoke_all_for_user!(user)
+      # Esto forzará que todos los tokens del usuario sean inválidos
+      # Útil cuando se cambia la contraseña o se desea forzar logout
+      where(user_id: user.id).delete_all
+
+      # Crear una entrada especial para invalidar todos los tokens futuros
+      # hasta que el usuario haga login nuevamente
+      create!(
+        jti: "revoke_all_#{user.id}_#{Time.current.to_i}",
+        user_id: user.id,
+        exp: 30.days.from_now # Tiempo suficiente para que expiren todos los tokens
+      )
+    end
+
+    # Estadísticas
+    def stats
+      {
+        total: count,
+        active: active.count,
+        expired: expired.count
+      }
+    end
+  end
+
+  # ============================================
+  # MÉTODOS DE INSTANCIA
+  # ============================================
+
+  # Verificar si el token está expirado
+  def expired?
+    exp < Time.current
+  end
+
+  # Información del token para debugging
+  def token_info
+    {
+      jti: jti,
+      user_email: user.email,
+      expires_at: exp,
+      expired: expired?,
+      revoked_at: created_at
+    }
+  end
+end
+
+# frozen_string_literal: true
+
+# Modelo PlatformMembership
+# Define usuarios con acceso de nivel plataforma (SuperAdmin, SupportAdmin)
+# Estos usuarios operan sobre todos los tenants
+
+class PlatformMembership < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable       # PaperTrail
+  include SoftDeletable   # Soft delete
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+
+  belongs_to :user
+  belongs_to :role
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+
+  validates :user_id, presence: true, uniqueness: {
+    conditions: -> { where(deleted_at: nil) },
+    message: "already has a platform membership"
+  }
+  validates :role_id, presence: true
+  validates :context, presence: true, inclusion: { in: [ "platform" ] }
+
+  # Validar que el rol sea de contexto platform
+  validate :role_must_be_platform_context
+
+  # MFA requerido para ciertos roles
+  validate :mfa_required_for_support, if: :support_admin?
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+
+  after_create :notify_platform_membership_created
+  before_destroy :prevent_last_super_admin_deletion
+
+  # ============================================
+  # SCOPES
+  # ============================================
+
+  scope :super_admins, -> { joins(:role).where(roles: { slug: "super_admin" }) }
+  scope :support_admins, -> { joins(:role).where(roles: { slug: "support_admin" }) }
+  scope :with_mfa, -> { where(mfa_enabled: true) }
+  scope :without_mfa, -> { where(mfa_enabled: false) }
+  scope :can_impersonate, -> { where(can_impersonate: true) }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Verificar tipo de rol
+  def super_admin?
+    role.super_admin?
+  end
+
+  def support_admin?
+    role.support_admin?
+  end
+
+  # MFA
+  def mfa_configured?
+    mfa_enabled? && mfa_configured_at.present?
+  end
+
+  def configure_mfa!
+    update!(
+      mfa_enabled: true,
+      mfa_configured_at: Time.current
+    )
+  end
+
+  def disable_mfa!
+    update!(
+      mfa_enabled: false,
+      mfa_configured_at: nil
+    )
+  end
+
+  # Impersonación
+  def can_impersonate?
+    can_impersonate && (super_admin? || support_admin?)
+  end
+
+  def record_impersonation!
+    update_column(:last_impersonation_at, Time.current)
+  end
+
+  # IP permitidas
+  def ip_allowed?(ip)
+    return true if allowed_ips.blank? || allowed_ips.empty?
+
+    allowed_ips.include?(ip)
+  end
+
+  def add_allowed_ip(ip)
+    update!(allowed_ips: (allowed_ips + [ ip ]).uniq)
+  end
+
+  def remove_allowed_ip(ip)
+    update!(allowed_ips: allowed_ips - [ ip ])
+  end
+
+  # Display
+  def display_name
+    "#{user.full_name} - #{role.name}"
+  end
+
+  def to_s
+    display_name
+  end
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Verificar si un usuario es platform admin
+    def exists_for_user?(user_id)
+      exists?(user_id: user_id)
+    end
+
+    # Contar super admins activos
+    def super_admin_count
+      super_admins.kept.count
+    end
+
+    # Estadísticas
+    def stats
+      {
+        total: kept.count,
+        super_admins: super_admins.kept.count,
+        support_admins: support_admins.kept.count,
+        with_mfa: with_mfa.count,
+        can_impersonate: can_impersonate.count
+      }
+    end
+  end
+
+  private
+
+  # ============================================
+  # PRIVATE METHODS
+  # ============================================
+
+  # Validar que el rol sea de contexto platform
+  def role_must_be_platform_context
+    if role.present? && !role.platform_role?
+      errors.add(:role, "must be a platform role")
+    end
+  end
+
+  # MFA requerido para support admins
+  def mfa_required_for_support
+    if support_admin? && !mfa_enabled?
+      errors.add(:mfa_enabled, "is required for Support Admin role")
+    end
+  end
+
+  # Prevenir eliminación del último super admin
+  def prevent_last_super_admin_deletion
+    if super_admin? && PlatformMembership.super_admin_count <= 1
+      errors.add(:base, "Cannot delete the last Super Admin")
+      throw :abort
+    end
+  end
+
+  # Notificar creación (para enviar email, logs, etc.)
+  def notify_platform_membership_created
+    Rails.logger.info("[PlatformMembership] Created: #{display_name}")
+    # TODO: Enviar email de notificación
+  end
+end
+
+# frozen_string_literal: true
+
+# Modelo de Role
+# Catálogo de roles para todos los contextos del sistema
+# Un rol define un conjunto de permisos en un contexto específico
+
+class Role < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable  # PaperTrail para auditoría
+
+  # ============================================
+  # CONSTANTES
+  # ============================================
+
+  # Contextos disponibles
+  CONTEXTS = %w[platform tenant].freeze
+
+  # Slugs de roles del sistema (no se pueden borrar)
+  SYSTEM_ROLE_SLUGS = %w[
+    super_admin
+    support_admin
+    tenant_admin
+    tenant_manager
+    tenant_driver
+  ].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+
+  has_many :platform_memberships, dependent: :restrict_with_error
+  has_many :tenant_memberships, dependent: :restrict_with_error
+  has_many :users, through: :platform_memberships
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+
+  validates :name, presence: true, length: { maximum: 100 }
+  validates :slug,
+            presence: true,
+            uniqueness: { case_sensitive: false },
+            length: { maximum: 100 },
+            format: {
+              with: /\A[a-z0-9]+(?:_[a-z0-9]+)*\z/,
+              message: "only allows lowercase letters, numbers, and underscores"
+            }
+
+  validates :context, presence: true, inclusion: { in: CONTEXTS }
+  validates :priority, presence: true, numericality: { only_integer: true }
+
+  # Validación custom: no borrar roles del sistema
+  validate :cannot_destroy_system_role, on: :destroy, if: :is_system?
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+
+  before_validation :generate_slug, if: -> { slug.blank? }
+  before_destroy :prevent_system_role_deletion
+
+  # ============================================
+  # SCOPES
+  # ============================================
+
+  scope :platform_roles, -> { where(context: "platform") }
+  scope :tenant_roles, -> { where(context: "tenant") }
+  scope :system_roles, -> { where(is_system: true) }
+  scope :custom_roles, -> { where(is_system: false) }
+  scope :requires_scope, -> { where(requires_scope: true) }
+  scope :by_priority, -> { order(priority: :asc, name: :asc) }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Verificar contexto
+  def platform_role?
+    context == "platform"
+  end
+
+  def tenant_role?
+    context == "tenant"
+  end
+
+  # Verificar si es rol específico
+  def super_admin?
+    slug == "super_admin"
+  end
+
+  def support_admin?
+    slug == "support_admin"
+  end
+
+  def tenant_admin?
+    slug == "tenant_admin"
+  end
+
+  def tenant_manager?
+    slug == "tenant_manager"
+  end
+
+  def tenant_driver?
+    slug == "tenant_driver"
+  end
+
+  # Display
+  def display_name
+    "#{name} (#{context})"
+  end
+
+  def to_s
+    name
+  end
+
+  # Estadísticas
+  def usage_count
+    if platform_role?
+      platform_memberships.count
+    else
+      tenant_memberships.count
+    end
+  end
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Encontrar rol por slug
+    def find_by_slug!(slug)
+      find_by!(slug: slug)
+    end
+
+    # Roles para un contexto específico
+    def for_context(context)
+      where(context: context).by_priority
+    end
+
+    # Estadísticas
+    def stats
+      {
+        total: count,
+        platform: platform_roles.count,
+        tenant: tenant_roles.count,
+        system: system_roles.count,
+        custom: custom_roles.count
+      }
+    end
+  end
+
+  private
+
+  # ============================================
+  # PRIVATE METHODS
+  # ============================================
+
+  # Generar slug desde el nombre
+  def generate_slug
+    return if name.blank?
+
+    base_slug = name.parameterize.underscore
+    generated_slug = base_slug
+    counter = 1
+
+    while Role.exists?(slug: generated_slug)
+      generated_slug = "#{base_slug}_#{counter}"
+      counter += 1
+    end
+
+    self.slug = generated_slug
+  end
+
+  # Prevenir eliminación de roles del sistema
+  def prevent_system_role_deletion
+    if is_system?
+      errors.add(:base, "Cannot delete system role")
+      throw :abort
+    end
+  end
+
+  # Validación custom
+  def cannot_destroy_system_role
+    if is_system?
+      errors.add(:base, "Cannot delete system role")
+    end
+  end
+end
+
+# frozen_string_literal: true
+
+# Modelo TenantMembership
+# Relaciona un User con un Tenant y define su rol dentro del tenant
+# Un usuario puede pertenecer a múltiples tenants con diferentes roles
+
+class TenantMembership < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable       # PaperTrail
+  include SoftDeletable   # Soft delete
+
+  # ============================================
+  # ENUMS Y CONSTANTES
+  # ============================================
+
+  # Estados de la membresía
+  STATUSES = %w[invited active suspended].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+
+  belongs_to :user
+  belongs_to :tenant
+  belongs_to :role
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  # ============================================
+  # DELEGATIONS
+  # ============================================
+
+  delegate :slug, :name, to: :role, prefix: true, allow_nil: true
+  delegate :context, to: :role, prefix: true, allow_nil: true
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+
+  validates :user_id, presence: true
+  validates :tenant_id, presence: true
+  validates :role_id, presence: true
+  validates :status, presence: true, inclusion: { in: STATUSES }
+
+  # Única combinación de user + tenant + role
+  validates :role_id,
+            uniqueness: {
+              scope: [ :user_id, :tenant_id ],
+              conditions: -> { where(deleted_at: nil) },
+              message: "already assigned to this user in this tenant"
+            }
+
+  # Solo puede haber un primary admin por tenant
+  validates :is_primary_admin,
+            uniqueness: {
+              scope: :tenant_id,
+              conditions: -> { where(is_primary_admin: true, deleted_at: nil) },
+              message: "only one primary admin allowed per tenant"
+            },
+            if: :is_primary_admin?
+
+  # Token de invitación único
+  validates :invitation_token,
+            uniqueness: true,
+            allow_nil: true
+
+  # Validación custom: no se puede cambiar tenant_id
+  validate :tenant_id_immutable, on: :update
+
+  # Validación: el rol debe ser de contexto tenant
+  validate :role_must_be_tenant_context
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+
+  before_validation :set_default_status, if: :new_record?
+  before_create :generate_invitation_token, if: -> { status == "invited" }
+  after_create :set_as_default_if_first_membership
+
+  # ============================================
+  # SCOPES
+  # ============================================
+
+  scope :active, -> { where(status: "active") }
+  scope :invited, -> { where(status: "invited") }
+  scope :suspended, -> { where(status: "suspended") }
+
+  scope :with_role_slug, ->(slug) { joins(:role).where(roles: { slug: slug }) }
+  scope :admins, -> { with_role_slug("tenant_admin") }
+  scope :managers, -> { with_role_slug("tenant_manager") }
+  scope :drivers, -> { with_role_slug("tenant_driver") }
+
+  scope :primary_admins, -> { where(is_primary_admin: true) }
+  scope :default_memberships, -> { where(is_default: true) }
+
+  scope :pending_invitations, -> {
+    invited.where.not(invitation_token: nil).where(invitation_accepted_at: nil)
+  }
+
+  scope :for_user, ->(user_id) { where(user_id: user_id) }
+  scope :for_tenant, ->(tenant_id) { where(tenant_id: tenant_id) }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Estado
+  def active?
+    status == "active"
+  end
+
+  def invited?
+    status == "invited"
+  end
+
+  def suspended?
+    status == "suspended"
+  end
+
+  # Roles - usando delegation de role_slug
+  def admin?
+    role_slug == "tenant_admin"
+  end
+
+  def manager?
+    role_slug == "tenant_manager"
+  end
+
+  def driver?
+    role_slug == "tenant_driver"
+  end
+
+  # Invitación
+  def invitation_pending?
+    invited? && invitation_token.present? && invitation_accepted_at.nil?
+  end
+
+  def invitation_expired?
+    return false unless invitation_pending?
+    return false unless invitation_sent_at.present?
+
+    invitation_sent_at < 7.days.ago
+  end
+
+  def accept_invitation!
+    return false unless invitation_pending?
+
+    update!(
+      status: "active",
+      invitation_accepted_at: Time.current,
+      invitation_token: nil
+    )
+  end
+
+  def resend_invitation!
+    return false unless invited?
+
+    generate_invitation_token
+    update!(invitation_sent_at: Time.current)
+  end
+
+  # Activación y suspensión
+  def activate!
+    update!(status: "active")
+  end
+
+  def suspend!
+    update!(status: "suspended")
+  end
+
+  # Default membership
+  def set_as_default!
+    # Remover default de otras membresías del mismo usuario
+    TenantMembership.where(user_id: user_id, is_default: true)
+                    .where.not(id: id)
+                    .update_all(is_default: false)
+
+    update!(is_default: true)
+  end
+
+  # Display
+  def display_name
+    "#{user.full_name} - #{role_name} at #{tenant.name}"
+  end
+
+  def to_s
+    display_name
+  end
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Slugs de roles disponibles para tenant
+    def available_role_slugs
+      Role.tenant_roles.pluck(:slug)
+    end
+
+    # Roles disponibles para tenant (objetos completos)
+    def available_roles
+      Role.tenant_roles.by_priority
+    end
+
+    # Encontrar membresía por token de invitación
+    def find_by_invitation_token(token)
+      find_by(invitation_token: token, status: "invited")
+    end
+
+    # Estadísticas
+    def stats_for_tenant(tenant_id)
+      where(tenant_id: tenant_id).group(:status).count
+    end
+
+    def stats_for_user(user_id)
+      where(user_id: user_id).group(:status).count
+    end
+
+    # Estadísticas por rol
+    def role_distribution_for_tenant(tenant_id)
+      where(tenant_id: tenant_id)
+        .joins(:role)
+        .group("roles.name")
+        .count
+    end
+  end
+
+  private
+
+  # ============================================
+  # PRIVATE METHODS
+  # ============================================
+
+  # Generar token de invitación
+  def generate_invitation_token
+    self.invitation_token = SecureRandom.urlsafe_base64(32)
+    self.invitation_sent_at = Time.current
+  end
+
+  # Estado por defecto
+  def set_default_status
+    self.status ||= "invited"
+  end
+
+  # Establecer como default si es la primera membresía del usuario
+  def set_as_default_if_first_membership
+    return if user.tenant_memberships.active.count > 1
+
+    set_as_default!
+  end
+
+  # Validación: tenant_id no puede cambiar
+  def tenant_id_immutable
+    if tenant_id_changed? && persisted?
+      errors.add(:tenant_id, "cannot be changed")
+    end
+  end
+
+  # Validación: el rol debe ser de contexto tenant
+  def role_must_be_tenant_context
+    return if role.nil?
+
+    unless role.tenant_role?
+      errors.add(:role, "must be a tenant role")
+    end
+  end
+end
+
+# frozen_string_literal: true
+
+# Modelo de Tenant (Organización/Cliente)
+# Representa un espacio aislado con sus propios usuarios, datos y configuración
+#
+# Cada tenant es una organización cliente que usa la plataforma
+# Los datos entre tenants están completamente aislados
+
+class Tenant < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable       # PaperTrail
+  include SoftDeletable   # Soft delete
+
+  # ============================================
+  # ENUMS Y CONSTANTES
+  # ============================================
+
+  # Estados posibles del tenant
+  STATUSES = %w[trial active suspended cancelled].freeze
+
+  # Planes disponibles
+  PLANS = %w[trial basic professional enterprise].freeze
+
+  # Configuración de límites por plan
+  PLAN_LIMITS = {
+    "trial" => { max_users: 5, max_storage_gb: 10 },
+    "basic" => { max_users: 10, max_storage_gb: 50 },
+    "professional" => { max_users: 50, max_storage_gb: 200 },
+    "enterprise" => { max_users: 1000, max_storage_gb: 1000 }
+  }.freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+
+  # Usuario que creó el tenant
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  # Membresías (usuarios del tenant)
+  has_many :tenant_memberships, dependent: :destroy
+  has_many :users, through: :tenant_memberships
+
+  # Admin principal del tenant
+  has_one :primary_membership,
+          -> { where(is_primary_admin: true) },
+          class_name: "TenantMembership"
+  has_one :primary_admin, through: :primary_membership, source: :user
+
+  # Usuarios activos
+  has_many :active_memberships,
+           -> { where(status: "active") },
+           class_name: "TenantMembership"
+  has_many :active_users, through: :active_memberships, source: :user
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+
+  validates :name, presence: true, length: { maximum: 255 }
+  validates :slug,
+            presence: true,
+            uniqueness: { case_sensitive: false },
+            length: { maximum: 100 },
+            format: {
+              with: /\A[a-z0-9]+(?:-[a-z0-9]+)*\z/,
+              message: "only allows lowercase letters, numbers, and hyphens"
+            }
+
+  validates :domain,
+            uniqueness: { case_sensitive: false, allow_nil: true },
+            format: {
+              with: /\A[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,}\z/i,
+              allow_blank: true,
+              message: "must be a valid domain"
+            }
+
+  validates :status, inclusion: { in: STATUSES }
+  validates :plan, inclusion: { in: PLANS }
+
+  validates :country,
+            length: { is: 2 },
+            format: { with: /\A[A-Z]{2}\z/, message: "must be ISO 3166-1 alpha-2 code" },
+            if: -> { country.present? }
+
+  validates :currency,
+            length: { is: 3 },
+            format: { with: /\A[A-Z]{3}\z/, message: "must be ISO 4217 code" },
+            if: -> { currency.present? }
+
+  validate :trial_ends_at_in_future, if: -> { status == "trial" && trial_ends_at.present? }
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+
+  before_validation :generate_slug, if: -> { slug.blank? }
+  before_validation :normalize_domain
+  before_validation :set_trial_end_date, if: -> { status == "trial" && trial_ends_at.blank? }
+  after_create :set_plan_limits
+
+  # ============================================
+  # SCOPES
+  # ============================================
+
+  scope :active, -> { where(status: "active") }
+  scope :trial, -> { where(status: "trial") }
+  scope :suspended, -> { where(status: "suspended") }
+  scope :cancelled, -> { where(status: "cancelled") }
+
+  scope :trial_ending_soon, ->(days = 7) {
+    where(status: "trial")
+      .where("trial_ends_at <= ?", days.days.from_now)
+      .where("trial_ends_at >= ?", Time.current)
+  }
+
+  scope :trial_expired, -> {
+    where(status: "trial")
+      .where("trial_ends_at < ?", Time.current)
+  }
+
+  scope :by_plan, ->(plan) { where(plan: plan) }
+  scope :by_name, -> { order(:name) }
+
+  scope :search_by_name, ->(query) {
+    where("LOWER(name) LIKE :query OR LOWER(slug) LIKE :query OR LOWER(domain) LIKE :query",
+          query: "%#{query.downcase}%")
+  }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Estado del tenant
+  def active?
+    status == "active" && !deleted?
+  end
+
+  def trial?
+    status == "trial"
+  end
+
+  def suspended?
+    status == "suspended"
+  end
+
+  def cancelled?
+    status == "cancelled"
+  end
+
+  # Trial
+  def trial_expired?
+    trial? && trial_ends_at.present? && trial_ends_at < Date.current
+  end
+
+  def trial_days_remaining
+    return 0 unless trial? && trial_ends_at.present?
+
+    [ (trial_ends_at - Date.current).to_i, 0 ].max
+  end
+
+  # Activación y suspensión
+  def activate!
+    update!(
+      status: "active",
+      subscription_starts_at: Date.current
+    )
+  end
+
+  def suspend!(reason: nil)
+    update!(
+      status: "suspended",
+      metadata: metadata.merge(suspension_reason: reason, suspended_at: Time.current)
+    )
+  end
+
+  def unsuspend!
+    update!(status: "active")
+  end
+
+  def cancel!
+    update!(
+      status: "cancelled",
+      subscription_ends_at: Date.current
+    )
+  end
+
+  # Límites del plan
+  def within_user_limit?
+    active_users.count < max_users
+  end
+
+  def user_limit_reached?
+    !within_user_limit?
+  end
+
+  def remaining_user_slots
+    [ max_users - active_users.count, 0 ].max
+  end
+
+  # Configuración
+  def setting(key)
+    settings.dig(key.to_s)
+  end
+
+  def set_setting(key, value)
+    update!(settings: settings.merge(key.to_s => value))
+  end
+
+  # Display
+  def display_name
+    name
+  end
+
+  def to_s
+    name
+  end
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Estadísticas generales
+    def stats
+      {
+        total: count,
+        active: active.count,
+        trial: trial.count,
+        suspended: suspended.count,
+        cancelled: cancelled.count,
+        trial_ending_soon: trial_ending_soon.count,
+        trial_expired: trial_expired.count
+      }
+    end
+
+    # Encontrar por slug o ID
+    def find_by_slug_or_id(identifier)
+      find_by(slug: identifier) || find_by(id: identifier)
+    end
+  end
+
+  private
+
+  # ============================================
+  # PRIVATE METHODS
+  # ============================================
+
+  # Generar slug desde el nombre
+  def generate_slug
+    return if name.blank?
+
+    base_slug = name.parameterize
+    generated_slug = base_slug
+    counter = 1
+
+    while Tenant.exists?(slug: generated_slug)
+      generated_slug = "#{base_slug}-#{counter}"
+      counter += 1
+    end
+
+    self.slug = generated_slug
+  end
+
+  # Normalizar dominio
+  def normalize_domain
+    self.domain = domain.downcase.strip if domain.present?
+  end
+
+  # Establecer fecha de fin de trial (30 días por defecto)
+  def set_trial_end_date
+    self.trial_ends_at = 30.days.from_now.to_date
+  end
+
+  # Validación custom: trial_ends_at debe ser futura
+  def trial_ends_at_in_future
+    if trial_ends_at < Date.current
+      errors.add(:trial_ends_at, "must be in the future")
+    end
+  end
+
+  # Establecer límites según el plan
+  def set_plan_limits
+    limits = PLAN_LIMITS[plan] || PLAN_LIMITS["trial"]
+    update_columns(
+      max_users: limits[:max_users],
+      max_storage_gb: limits[:max_storage_gb]
+    )
+  end
+end
+
+# frozen_string_literal: true
+
+# Modelo de Usuario - Identidad base del sistema
+# Gestiona TODOS los usuarios: platform admins, tenant users, etc.
+#
+# Un usuario es único por email en todo el sistema
+# Los roles y permisos se gestionan en tablas auxiliares (memberships)
+
+class User < ApplicationRecord
+  # ============================================
+  # DEVISE MODULES
+  # ============================================
+  devise :database_authenticatable,
+         :recoverable,
+         :trackable,
+         :lockable,
+         :validatable
+
+  # NOTA: NO usamos :registerable porque el registro se hace vía servicios
+  # NOTA: NO usamos :confirmable porque usamos email_verified_at custom
+  # NOTA: NO usamos :rememberable porque usamos JWT (stateless)
+
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable       # PaperTrail para auditoría
+  include SoftDeletable   # Soft delete con discard
+
+  # NO incluimos Tenantable aquí porque User puede ser cross-tenant
+  # La relación con tenants se maneja vía TenantMembership
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+
+  # Invitaciones
+  belongs_to :invited_by, class_name: "User", optional: true
+  has_many :invited_users, class_name: "User", foreign_key: :invited_by_id, dependent: :nullify
+
+  # Relaciones con contextos
+  has_one :platform_membership, dependent: :destroy
+  has_many :tenant_memberships, dependent: :destroy
+  has_many :tenants, through: :tenant_memberships
+
+  # Membresías activas
+  has_many :active_tenant_memberships,
+           -> { active },
+           class_name: "TenantMembership"
+  has_many :active_tenants, through: :active_tenant_memberships, source: :tenant
+
+  # Tenant por defecto
+  has_one :default_tenant_membership,
+          -> { where(is_default: true, status: "active") },
+          class_name: "TenantMembership"
+  has_one :default_tenant, through: :default_tenant_membership, source: :tenant
+
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+
+  # Email
+  validates :email,
+            presence: true,
+            uniqueness: { case_sensitive: false },
+            format: { with: URI::MailTo::EMAIL_REGEXP }
+
+  # Nombres
+  validates :first_name, presence: true, length: { maximum: 100 }
+  validates :last_name, presence: true, length: { maximum: 100 }
+
+  # Teléfono (opcional pero con formato)
+  validates :phone,
+            length: { maximum: 20 },
+            format: { with: /\A\+?[\d\s\-\(\)]+\z/, allow_blank: true }
+
+  # Token de invitación único si está presente
+  validates :invitation_token, uniqueness: true, allow_nil: true
+
+  # Password solo requerido si no es invitación pendiente
+  validates :password,
+            presence: true,
+            length: { minimum: 8 },
+            if: :password_required?
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+
+  # Normalizar email antes de validar
+  before_validation :normalize_email
+
+  # ============================================
+  # SCOPES
+  # ============================================
+
+  # Solo usuarios verificados
+  scope :verified, -> { where.not(email_verified_at: nil) }
+  scope :unverified, -> { where(email_verified_at: nil) }
+
+  # Invitaciones pendientes
+  scope :pending_invitation, -> { where.not(invitation_token: nil).where(invitation_accepted_at: nil) }
+  scope :invitation_accepted, -> { where.not(invitation_accepted_at: nil) }
+
+  # Por nombre
+  scope :by_name, -> { order(:first_name, :last_name) }
+  scope :search_by_name, ->(query) {
+    where("LOWER(first_name) LIKE :query OR LOWER(last_name) LIKE :query OR LOWER(email) LIKE :query",
+          query: "%#{query.downcase}%")
+  }
+
+  # Activos (no soft deleted)
+  scope :active, -> { kept }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Nombre completo
+  def full_name
+    "#{first_name} #{last_name}".strip
+  end
+
+  # Nombre completo con email
+  def display_name
+    "#{full_name} (#{email})"
+  end
+
+  # Iniciales
+  def initials
+    "#{first_name[0]}#{last_name[0]}".upcase
+  end
+
+  # Verificar email
+  def verify_email!
+    update_column(:email_verified_at, Time.current)
+  end
+
+  def email_verified?
+    email_verified_at.present?
+  end
+
+  # Invitaciones
+  def invitation_pending?
+    invitation_token.present? && invitation_accepted_at.nil?
+  end
+
+  def invitation_expired?
+    invitation_expires_at.present? && invitation_expires_at < Time.current
+  end
+
+  def accept_invitation!
+    update!(
+      invitation_accepted_at: Time.current,
+      invitation_token: nil,
+      invitation_expires_at: nil,
+      email_verified_at: Time.current
+    )
+  end
+
+  # Estado de la cuenta
+  def active?
+    !deleted? && !locked_at.present?
+  end
+
+  def locked?
+    locked_at.present?
+  end
+
+  # Contextos (placeholder para Fase 3)
+  def platform_admin?
+    false # Se implementará en Fase 3 con PlatformMembership
+  end
+
+  def support_admin?
+    false # Se implementará en Fase 3 con PlatformMembership
+  end
+
+  def has_tenant_access?(tenant_id)
+    false # Se implementará en Fase 2 con TenantMembership
+  end
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Buscar por email (case insensitive)
+    def find_by_email(email)
+      find_by("LOWER(email) = ?", email.downcase)
+    end
+
+    # Estadísticas
+    def stats
+      {
+        total: count,
+        verified: verified.count,
+        unverified: unverified.count,
+        pending_invitations: pending_invitation.count,
+        locked: where.not(locked_at: nil).count,
+        deleted: discarded.count
+      }
+    end
+  end
+
+  private
+
+  # ============================================
+  # PRIVATE METHODS
+  # ============================================
+
+  # Normalizar email (lowercase y strip)
+  def normalize_email
+    self.email = email.downcase.strip if email.present?
+  end
+
+  # Password requerido solo si no hay invitación pendiente
+  def password_required?
+    !persisted? || !password.nil? || !password_confirmation.nil?
+  end
+end

@@ -1,0 +1,353 @@
+# frozen_string_literal: true
+
+# Política base de Pundit
+# Todas las políticas heredan de esta clase
+# Define métodos por defecto que pueden ser sobrescritos
+
+class ApplicationPolicy
+  attr_reader :user, :record, :context
+
+  def initialize(user, record)
+    @user = user
+    @record = record
+    @context = extract_context
+  end
+
+  # ============================================
+  # MÉTODOS POR DEFECTO (RESTRICTIVOS)
+  # ============================================
+
+  def index?
+    false
+  end
+
+  def show?
+    false
+  end
+
+  def create?
+    false
+  end
+
+  def new?
+    create?
+  end
+
+  def update?
+    false
+  end
+
+  def edit?
+    update?
+  end
+
+  def destroy?
+    false
+  end
+
+  # ============================================
+  # HELPERS DE AUTORIZACIÓN
+  # ============================================
+
+  # Verificar si el usuario es platform admin
+  def platform_admin?
+    user&.platform_admin?
+  end
+
+  # Verificar si el usuario es super admin
+  def super_admin?
+    user&.super_admin?
+  end
+
+  # Verificar si el usuario es support admin
+  def support_admin?
+    user&.support_admin?
+  end
+
+  # Verificar si el usuario tiene acceso al tenant del record
+  def has_tenant_access?
+    return true if platform_admin?
+    return false unless record.respond_to?(:tenant_id)
+    return false unless user
+
+    user.has_tenant_access?(record.tenant_id)
+  end
+
+  # Verificar si el usuario es admin del tenant del record
+  def tenant_admin?
+    return true if platform_admin?
+    return false unless record.respond_to?(:tenant_id)
+    return false unless user
+
+    user.tenant_admin?(record.tenant_id)
+  end
+
+  # Verificar si el usuario es admin o manager del tenant
+  def tenant_admin_or_manager?
+    return true if platform_admin?
+    return false unless record.respond_to?(:tenant_id)
+    return false unless user
+
+    role = user.tenant_role(record.tenant_id)
+    role.in?(%w[admin manager])
+  end
+
+  # Verificar si el usuario es el propietario del record
+  def owner?
+    return false unless record.respond_to?(:user_id)
+    return false unless user
+
+    record.user_id == user.id
+  end
+
+  # ============================================
+  # SCOPE
+  # ============================================
+
+  class Scope
+    attr_reader :user, :scope, :context
+
+    def initialize(user, scope)
+      @user = user
+      @scope = scope
+      @context = extract_context
+    end
+
+    def resolve
+      # Por defecto, no retornar nada (restrictivo)
+      scope.none
+    end
+
+    private
+
+    # Extraer contexto del tenant actual
+    def extract_context
+      ActsAsTenant.current_tenant
+    end
+  end
+
+  private
+
+  # Extraer contexto del tenant actual
+  def extract_context
+    ActsAsTenant.current_tenant
+  end
+end
+
+
+# frozen_string_literal: true
+
+# Política para Tenant
+# Define quién puede realizar operaciones sobre tenants
+
+class TenantPolicy < ApplicationPolicy
+  # ============================================
+  # ACCIONES DE LECTURA
+  # ============================================
+
+  def index?
+    # SuperAdmin puede listar todos los tenants
+    # Usuarios normales pueden listar sus tenants
+    super_admin? || user.present?
+  end
+
+  def show?
+    # SuperAdmin puede ver cualquier tenant
+    # Usuario puede ver tenants a los que tiene acceso
+    super_admin? || user.has_tenant_access?(record.id)
+  end
+
+  # ============================================
+  # ACCIONES DE ESCRITURA
+  # ============================================
+
+  def create?
+    # Solo SuperAdmin puede crear tenants
+    super_admin?
+  end
+
+  def update?
+    # SuperAdmin puede actualizar cualquier tenant
+    # TenantAdmin puede actualizar su propio tenant
+    super_admin? || (tenant_admin? && user.has_tenant_access?(record.id))
+  end
+
+  def destroy?
+    # Solo SuperAdmin puede eliminar tenants
+    super_admin?
+  end
+
+  # ============================================
+  # ACCIONES ESPECÍFICAS
+  # ============================================
+
+  def activate?
+    super_admin?
+  end
+
+  def suspend?
+    super_admin?
+  end
+
+  def unsuspend?
+    super_admin?
+  end
+
+  def cancel?
+    super_admin? || tenant_admin?
+  end
+
+  def change_plan?
+    super_admin?
+  end
+
+  def view_stats?
+    super_admin? || tenant_admin?
+  end
+
+  def invite_users?
+    super_admin? || tenant_admin_or_manager?
+  end
+
+  def manage_users?
+    super_admin? || tenant_admin?
+  end
+
+  # ============================================
+  # SCOPE
+  # ============================================
+
+  class Scope < ApplicationPolicy::Scope
+    def resolve
+      if user.super_admin?
+        # SuperAdmin ve todos los tenants
+        scope.all
+      elsif user.present?
+        # Usuario normal solo ve sus tenants
+        scope.joins(:tenant_memberships)
+             .where(tenant_memberships: { user_id: user.id, status: "active" })
+             .distinct
+      else
+        scope.none
+      end
+    end
+  end
+end
+
+# frozen_string_literal: true
+
+# Política para User
+# Define quién puede realizar operaciones sobre usuarios
+
+class UserPolicy < ApplicationPolicy
+  # ============================================
+  # ACCIONES DE LECTURA
+  # ============================================
+
+  def index?
+    # SuperAdmin puede listar todos los usuarios
+    # TenantAdmin/Manager pueden listar usuarios de su tenant
+    super_admin? || tenant_admin_or_manager?
+  end
+
+  def show?
+    # SuperAdmin puede ver cualquier usuario
+    # Usuario puede verse a sí mismo
+    # TenantAdmin/Manager pueden ver usuarios de su tenant
+    super_admin? || owner? || can_view_in_tenant?
+  end
+
+  # ============================================
+  # ACCIONES DE ESCRITURA
+  # ============================================
+
+  def create?
+    # SuperAdmin puede crear cualquier usuario
+    # TenantAdmin puede crear usuarios en su tenant
+    super_admin? || tenant_admin?
+  end
+
+  def update?
+    # SuperAdmin puede actualizar cualquier usuario
+    # Usuario puede actualizar su propio perfil
+    # TenantAdmin puede actualizar usuarios de su tenant
+    super_admin? || owner? || (tenant_admin? && can_view_in_tenant?)
+  end
+
+  def destroy?
+    # SuperAdmin puede eliminar cualquier usuario
+    # TenantAdmin puede eliminar usuarios de su tenant (excepto primary admin)
+    return true if super_admin?
+    return false unless tenant_admin?
+    return false if record.tenant_memberships.any?(&:is_primary_admin)
+
+    can_view_in_tenant?
+  end
+
+  # ============================================
+  # ACCIONES ESPECÍFICAS
+  # ============================================
+
+  def invite?
+    create?
+  end
+
+  def resend_invitation?
+    super_admin? || tenant_admin_or_manager?
+  end
+
+  def activate?
+    super_admin? || tenant_admin?
+  end
+
+  def deactivate?
+    super_admin? || (tenant_admin? && !owner?)
+  end
+
+  def change_role?
+    super_admin? || tenant_admin?
+  end
+
+  def impersonate?
+    # Solo SupportAdmin puede impersonar
+    support_admin? && user.platform_membership&.can_impersonate?
+  end
+
+  def view_audit_log?
+    super_admin? || owner?
+  end
+
+  # ============================================
+  # HELPERS PRIVADOS
+  # ============================================
+
+  private
+
+  def can_view_in_tenant?
+    return false unless context.present?
+
+    # Verificar si el usuario tiene membresía en el tenant actual
+    record.has_tenant_access?(context.id)
+  end
+
+  # ============================================
+  # SCOPE
+  # ============================================
+
+  class Scope < ApplicationPolicy::Scope
+    def resolve
+      if user.super_admin?
+        # SuperAdmin ve todos los usuarios
+        scope.all
+      elsif context.present?
+        # En contexto de tenant, ver usuarios del tenant
+        scope.joins(:tenant_memberships)
+             .where(tenant_memberships: { tenant_id: context.id, status: "active" })
+             .distinct
+      else
+        # Sin contexto, solo verse a sí mismo
+        scope.where(id: user.id)
+      end
+    end
+  end
+end

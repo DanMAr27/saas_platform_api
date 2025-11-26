@@ -1,0 +1,1493 @@
+# frozen_string_literal: true
+
+module Authentication
+  # Servicio para decodificar y validar tokens JWT
+  # Considera multi-contexto y usuarios sin tenant (platform/support)
+  class JwtDecoder
+    include ServiceResultHelper
+
+    ALGORITHM = "HS256"
+
+    class << self
+      def decode(token)
+        new.decode(token)
+      end
+
+      def decode_unverified(token)
+        new.decode_unverified(token)
+      end
+
+      def peek(token)
+        new.peek(token)
+      end
+
+      def expired?(token)
+        new.expired?(token)
+      end
+
+      def extract_user_id(token)
+        new.extract_user_id(token)
+      end
+    end
+
+    # Decodifica token con verificación completa
+    def decode(token)
+      return failure(errors: "Token is missing") if token.blank?
+
+      payload, header = JWT.decode(
+        token,
+        secret_key,
+        true,
+        {
+          algorithm: ALGORITHM,
+          verify_expiration: true,
+          verify_iat: true,
+          iss: jwt_issuer,
+          aud: jwt_audience,
+          verify_iss: true,
+          verify_aud: true
+        }
+      )
+
+      if token_revoked?(payload)
+        return failure(errors: "Token has been revoked")
+      end
+
+      user = User.find_by(id: payload["sub"])
+      unless user&.active?
+        return failure(errors: "User not found or inactive")
+      end
+
+      # Validar tenant_id solo si el contexto es tenant
+      if payload["context"] == "tenant" && payload["tenant_id"].present?
+        tenant_membership = TenantMembership.active.find_by(user_id: user.id, tenant_id: payload["tenant_id"])
+        unless tenant_membership
+          return failure(errors: "Access denied to this tenant")
+        end
+      end
+
+      success(data: payload.with_indifferent_access, meta: { header: header, user: user })
+    rescue JWT::ExpiredSignature
+      failure(errors: "Token has expired")
+    rescue JWT::InvalidIssuerError
+      failure(errors: "Token issuer is invalid")
+    rescue JWT::InvalidAudError
+      failure(errors: "Token audience is invalid")
+    rescue JWT::DecodeError => e
+      Rails.logger.error("[JWT] Decode error: #{e.message}")
+      failure(errors: "Invalid token")
+    rescue StandardError => e
+      Rails.logger.error("[JWT] Unexpected error: #{e.class.name} - #{e.message}")
+      failure(errors: "Token validation failed")
+    end
+
+    # Decodifica sin verificar (debugging)
+    def decode_unverified(token)
+      payload, header = JWT.decode(token, nil, false)
+      { payload: payload.with_indifferent_access, header: header }
+    rescue JWT::DecodeError => e
+      Rails.logger.error("[JWT] Decode error: #{e.message}")
+      nil
+    end
+
+    # Extraer info básica sin verificar completamente
+    def peek(token)
+      decoded = decode_unverified(token)
+      return nil unless decoded
+
+      {
+        user_id: decoded[:payload][:sub],
+        email: decoded[:payload][:email],
+        context: decoded[:payload][:context],
+        tenant_id: decoded[:payload][:tenant_id],
+        expires_at: Time.at(decoded[:payload][:exp].to_i),
+        issued_at: Time.at(decoded[:payload][:iat].to_i),
+        jti: decoded[:payload][:jti]
+      }
+    end
+
+    def expired?(token)
+      info = peek(token)
+      return true unless info
+      info[:expires_at] < Time.current
+    end
+
+    def extract_user_id(token)
+      info = peek(token)
+      info&.dig(:user_id)
+    end
+
+    private
+
+    def token_revoked?(payload)
+      jti = payload["jti"]
+      return false unless jti.present?
+      JwtBlacklist.exists?(jti: jti)
+    end
+
+    def secret_key
+      Rails.application.credentials.dig(:devise_jwt_secret_key) ||
+        ENV.fetch("DEVISE_JWT_SECRET_KEY") ||
+        Rails.application.credentials.secret_key_base
+    end
+
+    def jwt_issuer
+      ENV.fetch("JWT_ISSUER", "saas_platform")
+    end
+
+    def jwt_audience
+      ENV.fetch("JWT_AUDIENCE", "saas_platform_api")
+    end
+  end
+end
+
+# frozen_string_literal: true
+
+module Authentication
+  # Servicio para codificar tokens JWT
+  # Genera tokens con información de usuario y contexto (platform/tenant)
+  class JwtEncoder
+    include ServiceResultHelper
+
+    ALGORITHM = "HS256"
+    DEFAULT_EXPIRATION = 24.hours.to_i
+
+    class << self
+      # Genera JWT para un usuario en un contexto específico
+      # @param user [User]
+      # @param context [String] 'platform', 'tenant', 'external_org'
+      # @param tenant_id [Integer, nil] solo para contextos tenant
+      # @param expiration [Integer, nil] segundos
+      def encode(user:, context:, tenant_id: nil, expiration: nil)
+        exp = expiration || DEFAULT_EXPIRATION
+        jti = generate_jti
+        payload = build_payload(user: user, context: context, tenant_id: tenant_id, jti: jti, exp: exp)
+        JWT.encode(payload, secret_key, ALGORITHM)
+      end
+
+      # Genera JWT y retorna metadata
+      def encode_with_metadata(user:, context:, tenant_id: nil, expiration: nil)
+        exp = expiration || DEFAULT_EXPIRATION
+        issued_at = Time.current
+        expires_at = issued_at + exp
+
+        token = encode(user: user, context: context, tenant_id: tenant_id, expiration: exp)
+
+        {
+          token: token,
+          expires_at: expires_at.iso8601,
+          issued_at: issued_at.iso8601,
+          expires_in: exp,
+          token_type: "Bearer"
+        }
+      end
+
+      private
+
+      def build_payload(user:, context:, tenant_id:, jti:, exp:)
+        issued_at = Time.current.to_i
+        payload = {
+          jti: jti,
+          sub: user.id.to_s,
+          iat: issued_at,
+          exp: issued_at + exp,
+          iss: jwt_issuer,
+          aud: jwt_audience,
+          email: user.email,
+          name: user.full_name,
+          verified: user.email_verified?,
+          context: context
+        }
+
+        # Agregar tenant_id solo si aplica
+        payload[:tenant_id] = tenant_id if context == "tenant" && tenant_id.present?
+        payload
+      end
+
+      def generate_jti
+        SecureRandom.uuid
+      end
+
+      def secret_key
+        Rails.application.credentials.dig(:devise_jwt_secret_key) ||
+          ENV.fetch("DEVISE_JWT_SECRET_KEY") ||
+          Rails.application.credentials.secret_key_base
+      end
+
+      def jwt_issuer
+        ENV.fetch("JWT_ISSUER", "saas_platform")
+      end
+
+      def jwt_audience
+        ENV.fetch("JWT_AUDIENCE", "saas_platform_api")
+      end
+    end
+  end
+end
+# frozen_string_literal: true
+
+module Authentication
+  class LoginStep1Service
+    include ServiceResultHelper
+
+    attr_reader :email, :password, :request_info
+
+    def initialize(email:, password:, request_info: {})
+      @email = email&.strip&.downcase
+      @password = password
+      @request_info = request_info
+    end
+
+    def self.call(**args)
+      new(**args).call
+    end
+
+    def call
+      # Validar parámetros
+      return failure(errors: [ "Email is required" ]) if email.blank?
+      return failure(errors: [ "Password is required" ]) if password.blank?
+
+      # Buscar usuario
+      user = find_user
+      unless user
+        Rails.logger.info "[LoginStep1] ❌ User not found: #{email}"
+        return failure(errors: [ "Invalid credentials" ])
+      end
+
+      Rails.logger.info "[LoginStep1] ✓ User found: #{user.email} (ID: #{user.id})"
+
+      # Validar contraseña
+      password_valid = user.valid_password?(password)
+      Rails.logger.info "[LoginStep1] Password check: #{password_valid ? '✓ VALID' : '❌ INVALID'}"
+
+      unless password_valid
+        handle_failed_login(user)
+        return failure(errors: [ "Invalid credentials" ])
+      end
+
+      # Validar estado del usuario
+      Rails.logger.info "[LoginStep1] Validating user state..."
+      Rails.logger.info "[LoginStep1]   - deleted?: #{user.deleted?}"
+      Rails.logger.info "[LoginStep1]   - locked?: #{user.locked?}"
+      Rails.logger.info "[LoginStep1]   - email_verified?: #{user.email_verified?}"
+
+      validation_result = validate_user_state(user)
+      if validation_result.failure?
+        Rails.logger.info "[LoginStep1] ❌ User state validation failed"
+        return validation_result
+      end
+
+      Rails.logger.info "[LoginStep1] ✓ User state valid"
+
+      # Obtener contextos disponibles
+      contexts_query = AvailableContextsQuery.new(user)
+      available_contexts = contexts_query.call
+
+      Rails.logger.info "[LoginStep1] Contexts found: #{available_contexts.size}"
+      available_contexts.each_with_index do |ctx, i|
+        Rails.logger.info "[LoginStep1]   #{i+1}. #{ctx[:type]} - #{ctx[:display_name]}"
+      end
+
+      # Verificar que tenga al menos un contexto
+      if available_contexts.empty?
+        Rails.logger.info "[LoginStep1] ❌ No contexts available"
+        return failure(errors: [ "User has no active contexts or roles" ])
+      end
+
+      # Obtener contexto por defecto
+      default_context = contexts_query.default_context
+      Rails.logger.info "[LoginStep1] Default context: #{default_context&.dig(:display_name) || 'NONE'}"
+
+      # Determinar si requiere selección
+      requires_selection = contexts_query.multiple_contexts?
+
+      # Generar session token temporal
+      session_token = generate_session_token(user)
+
+      # Actualizar información de login
+      update_login_info(user)
+
+      Rails.logger.info "[LoginStep1] ✓ Login successful!"
+
+      # Retornar resultado
+      success(
+        data: {
+          requires_context_selection: requires_selection,
+          contexts: available_contexts,
+          default_context: default_context,
+          session_token: session_token,
+          user: basic_user_data(user)
+        },
+        message: "Authentication successful"
+      )
+    end
+
+    private
+
+    def find_user
+      User.find_by_email(email)
+    end
+
+    def validate_user_state(user)
+      if user.deleted?
+        return failure(errors: [ "Account is deactivated" ])
+      end
+
+      if user.locked?
+        return failure(errors: [ "Account is locked. Please contact support." ])
+      end
+
+      unless user.email_verified?
+        return failure(
+          errors: [ "Email not verified. Please check your inbox." ],
+          meta: { requires_verification: true }
+        )
+      end
+
+      success(data: { valid: true })
+    end
+
+    def generate_session_token(user)
+      payload = {
+        user_id: user.id,
+        email: user.email,
+        purpose: "context_selection",
+        exp: 5.minutes.from_now.to_i,
+        iat: Time.current.to_i
+      }
+
+      JWT.encode(payload, session_secret, "HS256")
+    end
+
+    def session_secret
+      Rails.application.credentials.dig(:session_secret_key) ||
+        ENV.fetch("SESSION_SECRET_KEY", Rails.application.credentials.secret_key_base)
+    end
+
+    def update_login_info(user)
+      user.update_columns(
+        last_login_at: Time.current,
+        sign_in_count: user.sign_in_count + 1,
+        current_sign_in_at: Time.current,
+        last_sign_in_at: user.current_sign_in_at || Time.current,
+        current_sign_in_ip: request_info[:ip],
+        last_sign_in_ip: user.current_sign_in_ip,
+        failed_attempts: 0
+      )
+    end
+
+    def handle_failed_login(user)
+      user.increment!(:failed_attempts)
+
+      if user.failed_attempts >= Devise.maximum_attempts
+        user.lock_access!
+        Rails.logger.warn("[Login] Account locked for user #{user.email}")
+      end
+    end
+
+    def basic_user_data(user)
+      {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        avatar_url: user.avatar_url,
+        email_verified: user.email_verified?
+      }
+    end
+  end
+end
+# frozen_string_literal: true
+
+module Authentication
+  # Servicio de Login - Paso 2: Selección de Contexto
+  # Recibe session_token del paso 1 y genera JWT con contexto específico
+  #
+  # Uso:
+  #   result = LoginStep2Service.call(
+  #     session_token: 'token_from_step1',
+  #     context_type: 'tenant',
+  #     tenant_id: 1  # Solo si context_type es 'tenant'
+  #   )
+
+  class LoginStep2Service
+    include ServiceResultHelper
+
+    attr_reader :session_token, :context_type, :tenant_id
+
+    def initialize(session_token:, context_type:, tenant_id: nil)
+      @session_token = session_token
+      @context_type = context_type
+      @tenant_id = tenant_id
+    end
+
+    def self.call(**args)
+      new(**args).call
+    end
+
+    def call
+      # Validar parámetros
+      return failure(errors: "Session token is required") if session_token.blank?
+      return failure(errors: "Context type is required") if context_type.blank?
+
+      # Validar session token
+      user_result = validate_session_token
+      return user_result if user_result.failure?
+
+      user = user_result.data
+
+      # Validar contexto seleccionado
+      context_result = validate_context_selection(user)
+      return context_result if context_result.failure?
+
+      context_data = context_result.data
+
+      # Generar JWT con el contexto seleccionado
+      token_data = JwtEncoder.encode_with_metadata(
+        user: user,
+        context: context_data[:context],
+        tenant_id: context_data[:tenant_id]
+      )
+
+      # Retornar resultado exitoso
+      success(
+        data: {
+          token: token_data[:token],
+          token_type: token_data[:token_type],
+          expires_at: token_data[:expires_at],
+          expires_in: token_data[:expires_in],
+          user: user_data(user, context_data)
+        },
+        message: "Context selected successfully"
+      )
+    end
+
+    private
+
+    # Validar y decodificar session token
+    def validate_session_token
+      begin
+        payload = JWT.decode(
+          session_token,
+          session_secret,
+          true,
+          { algorithm: "HS256", verify_expiration: true }
+        ).first
+
+        # Verificar que es un token de selección de contexto
+        unless payload["purpose"] == "context_selection"
+          return failure(errors: "Invalid session token")
+        end
+
+        # Buscar usuario
+        user = User.find_by(id: payload["user_id"])
+        unless user&.active?
+          return failure(errors: "User not found or inactive")
+        end
+
+        success(data: user)
+
+      rescue JWT::ExpiredSignature
+        failure(errors: "Session expired. Please login again.")
+      rescue JWT::DecodeError => e
+        Rails.logger.error("[LoginStep2] Invalid session token: #{e.message}")
+        failure(errors: "Invalid session token")
+      end
+    end
+
+    # Validar que el contexto seleccionado sea válido para el usuario
+    def validate_context_selection(user)
+      # Obtener contextos disponibles
+      available_contexts = AvailableContextsQuery.new(user).call
+
+      # Buscar el contexto seleccionado
+      selected_context = case context_type
+      when "platform"
+                          find_platform_context(available_contexts)
+      when "tenant"
+                          find_tenant_context(available_contexts)
+      else
+                          return failure(errors: "Invalid context type: #{context_type}")
+      end
+
+      unless selected_context
+        return failure(errors: "Selected context is not available for this user")
+      end
+
+      # Retornar datos del contexto
+      success(
+        data: {
+          context: selected_context[:context],
+          tenant_id: selected_context[:tenant_id],
+          role: selected_context[:role],
+          role_name: selected_context[:role_name],
+          full_context: selected_context
+        }
+      )
+    end
+
+    # Encontrar contexto platform
+    def find_platform_context(available_contexts)
+      available_contexts.find { |ctx| ctx[:type] == "platform" }
+    end
+
+    # Encontrar contexto tenant específico
+    def find_tenant_context(available_contexts)
+      return nil if tenant_id.blank?
+
+      available_contexts.find do |ctx|
+        ctx[:type] == "tenant" && ctx[:tenant_id] == tenant_id.to_i
+      end
+    end
+
+    # Secret para session tokens
+    def session_secret
+      Rails.application.credentials.dig(:session_secret_key) ||
+        ENV.fetch("SESSION_SECRET_KEY", Rails.application.credentials.secret_key_base)
+    end
+
+    # Construir datos del usuario para respuesta
+    def user_data(user, context_data)
+      {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        avatar_url: user.avatar_url,
+        email_verified: user.email_verified?,
+        context: context_data[:context],
+        tenant_id: context_data[:tenant_id],
+        role: context_data[:role],
+        role_name: context_data[:role_name]
+      }
+    end
+  end
+end
+# frozen_string_literal: true
+
+module Authentication
+  # Servicio de Logout
+  # Revoca un token JWT agregándolo a la blacklist
+  #
+  # Uso:
+  #   result = LogoutService.call(token: token, user: current_user)
+  #
+  # Flujo:
+  # 1. Decodificar token
+  # 2. Agregar a blacklist (JwtBlacklist)
+  # 3. Retornar confirmación
+
+  class LogoutService
+    include ServiceResultHelper
+
+    attr_reader :token, :user
+
+    def initialize(token:, user:)
+      @token = token
+      @user = user
+    end
+
+    def self.call(**args)
+      new(**args).call
+    end
+
+    def call
+      # Validar parámetros
+      return failure(errors: "Token is required") if token.blank?
+      return failure(errors: "User is required") unless user
+
+      # Decodificar token para obtener payload
+      decode_result = JwtDecoder.decode(token)
+
+      # Si el token ya está revocado o es inválido, considerarlo éxito
+      # (el usuario ya está deslogueado)
+      if decode_result.failure?
+        return success(
+          data: { revoked: false },
+          message: "Already logged out"
+        )
+      end
+
+      payload = decode_result.data
+
+      # Verificar que el token pertenece al usuario
+      unless payload[:sub].to_s == user.id.to_s
+        return failure(errors: "Token does not belong to this user")
+      end
+
+      # Agregar token a la blacklist
+      revoke_result = revoke_token(payload)
+      return revoke_result if revoke_result.failure?
+
+      # Retornar éxito
+      success(
+        data: {
+          revoked: true,
+          revoked_at: Time.current.iso8601
+        },
+        message: "Logout successful"
+      )
+
+    rescue StandardError => e
+      Rails.logger.error("[Logout] Error: #{e.class.name} - #{e.message}")
+      failure(errors: "Logout failed")
+    end
+
+    private
+
+    # Revocar token agregándolo a la blacklist
+    def revoke_token(payload)
+      JwtBlacklist.create!(
+        jti: payload[:jti],
+        user_id: user.id,
+        exp: Time.at(payload[:exp].to_i)
+      )
+
+      success(data: { revoked: true })
+    rescue ActiveRecord::RecordInvalid => e
+      # Si ya existe, considerarlo éxito (ya estaba revocado)
+      if e.message.include?("Jti has already been taken")
+        return success(data: { revoked: false })
+      end
+
+      failure(errors: "Failed to revoke token")
+    rescue StandardError => e
+      Rails.logger.error("[Logout] Revoke error: #{e.message}")
+      failure(errors: "Failed to revoke token")
+    end
+  end
+end
+# frozen_string_literal: true
+
+module Authentication
+  # Servicio para renovar (refresh) tokens JWT
+  # Permite renovar un token antes de que expire sin volver a pedir credenciales
+  #
+  # Uso:
+  #   result = RefreshTokenService.call(token: current_token)
+  #
+  # Flujo:
+  # 1. Validar token actual
+  # 2. Revocar token actual
+  # 3. Generar nuevo token con el mismo contexto
+  # 4. Retornar nuevo token
+
+  class RefreshTokenService
+    include ServiceResultHelper
+
+    # Ventana de renovación: permitir renovar si faltan menos de estas horas para expirar
+    REFRESH_WINDOW = 2.hours
+
+    attr_reader :token
+
+    def initialize(token:)
+      @token = token
+    end
+
+    def self.call(**args)
+      new(**args).call
+    end
+
+    def call
+      # Validar parámetros
+      return failure(errors: "Token is required") if token.blank?
+
+      # Decodificar y validar token actual
+      decode_result = JwtDecoder.decode(token)
+      return decode_result if decode_result.failure?
+
+      payload = decode_result.data
+      user = decode_result.meta[:user]
+
+      # Validar que el usuario siga activo
+      unless user.active?
+        return failure(errors: "User account is not active")
+      end
+
+      # Verificar si el token está cerca de expirar
+      # (opcional: solo permitir refresh si está en ventana de renovación)
+      # unless token_in_refresh_window?(payload)
+      #   return failure(errors: 'Token is not eligible for refresh yet')
+      # end
+
+      # Revocar token actual
+      revoke_result = revoke_current_token(payload, user)
+      return revoke_result if revoke_result.failure?
+
+      # Generar nuevo token con el mismo contexto
+      new_token_data = generate_new_token(user, payload)
+
+      # Retornar nuevo token
+      success(
+        data: {
+          token: new_token_data[:token],
+          token_type: new_token_data[:token_type],
+          expires_at: new_token_data[:expires_at],
+          expires_in: new_token_data[:expires_in],
+          user: user_data(user, payload)
+        },
+        message: "Token refreshed successfully"
+      )
+
+    rescue StandardError => e
+      Rails.logger.error("[RefreshToken] Error: #{e.class.name} - #{e.message}")
+      failure(errors: "Token refresh failed")
+    end
+
+    private
+
+    # Verificar si el token está en la ventana de renovación
+    def token_in_refresh_window?(payload)
+      exp = Time.at(payload[:exp].to_i)
+      exp - Time.current <= REFRESH_WINDOW
+    end
+
+    # Revocar token actual
+    def revoke_current_token(payload, user)
+      JwtBlacklist.create!(
+        jti: payload[:jti],
+        user_id: user.id,
+        exp: Time.at(payload[:exp].to_i)
+      )
+
+      success(data: { revoked: true })
+    rescue ActiveRecord::RecordInvalid => e
+      # Si ya existe, continuamos (race condition)
+      Rails.logger.warn("[RefreshToken] Token already revoked: #{payload[:jti]}")
+      success(data: { revoked: false })
+    rescue StandardError => e
+      Rails.logger.error("[RefreshToken] Revoke error: #{e.message}")
+      failure(errors: "Failed to revoke old token")
+    end
+
+    # Generar nuevo token con el mismo contexto
+    def generate_new_token(user, old_payload)
+      JwtEncoder.encode_with_metadata(
+        user: user,
+        context: old_payload[:context],
+        tenant_id: old_payload[:tenant_id]
+      )
+    end
+
+    # Construir datos del usuario para respuesta
+    def user_data(user, payload)
+      {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        avatar_url: user.avatar_url,
+        context: payload[:context],
+        tenant_id: payload[:tenant_id],
+        email_verified: user.email_verified?
+      }
+    end
+  end
+end
+
+# Módulo para incluir en servicios base
+module ServiceResultHelper
+  # Crear resultado de éxito
+  def success(data: nil, message: nil, meta: nil)
+    ServiceResult.success(data: data, message: message, meta: meta)
+  end
+
+  # Crear resultado de fallo
+  def failure(errors: nil, message: nil, data: nil, meta: nil)
+    ServiceResult.failure(errors: errors, message: message, data: data, meta: meta)
+  end
+
+  # Ejecutar bloque y retornar ServiceResult automáticamente
+  def result_from
+    yield
+  rescue ActiveRecord::RecordInvalid => e
+    failure(errors: e.record.errors.full_messages)
+  rescue ActiveRecord::RecordNotFound => e
+    failure(errors: "Record not found", message: e.message)
+  rescue StandardError => e
+    Rails.logger.error("[ServiceError] #{e.class.name}: #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n"))
+    failure(errors: "An error occurred", message: e.message)
+  end
+end
+# App/services/concerns/service_result.rb
+
+# Objeto de resultado estándar para servicios
+# Proporciona una interfaz consistente para retornar resultados de operaciones
+#
+# Uso en servicios:
+#   class CreateUserService
+#     def call
+#       user = User.new(params)
+#       if user.save
+#         ServiceResult.success(data: user, message: 'User created')
+#       else
+#         ServiceResult.failure(errors: user.errors.full_messages)
+#       end
+#     end
+#   end
+#
+# Uso en controllers/APIs:
+#   result = CreateUserService.call(params)
+#   if result.success?
+#     render json: result.data
+#   else
+#     render json: { errors: result.errors }, status: :unprocessable_entity
+#   end
+
+class ServiceResult
+  attr_reader :success, :data, :errors, :message, :meta
+
+  def initialize(success:, data: nil, errors: nil, message: nil, meta: nil)
+    @success = success
+    @data = data
+    @errors = errors || []
+    @message = message
+    @meta = meta || {}
+  end
+
+  # Métodos de conveniencia para crear resultados
+
+  def self.success(data: nil, message: nil, meta: nil)
+    new(
+      success: true,
+      data: data,
+      message: message,
+      meta: meta
+    )
+  end
+
+  def self.failure(errors: nil, message: nil, data: nil, meta: nil)
+    # Normalizar errores a array
+    normalized_errors = case errors
+    when String
+                          [ errors ]
+    when Hash
+                          errors.values.flatten
+    when Array
+                          errors
+    when ActiveModel::Errors
+                          errors.full_messages
+    else
+                          [ "Unknown error occurred" ]
+    end
+
+    new(
+      success: false,
+      errors: normalized_errors,
+      message: message || normalized_errors.first,
+      data: data,
+      meta: meta
+    )
+  end
+
+  # Predicados
+
+  def success?
+    @success == true
+  end
+
+  def failure?
+    !success?
+  end
+
+  def has_data?
+    @data.present?
+  end
+
+  def has_errors?
+    @errors.present?
+  end
+
+  # Conversión a hash (útil para APIs)
+
+  def to_h
+    hash = {
+      success: @success
+    }
+
+    hash[:data] = @data if @data.present?
+    hash[:message] = @message if @message.present?
+    hash[:errors] = @errors if @errors.present?
+    hash[:meta] = @meta if @meta.present?
+
+    hash
+  end
+
+  def to_json(*args)
+    to_h.to_json(*args)
+  end
+
+  # Acceso a datos con métodos delegation
+
+  def method_missing(method_name, *args, &block)
+    if @data.respond_to?(method_name)
+      @data.public_send(method_name, *args, &block)
+    else
+      super
+    end
+  end
+
+  def respond_to_missing?(method_name, include_private = false)
+    @data.respond_to?(method_name) || super
+  end
+
+  # Operadores útiles
+
+  # Permite encadenar operaciones
+  # result = service1.call.then { |data| service2.call(data) }
+  def then
+    if success? && block_given?
+      yield(@data)
+    else
+      self
+    end
+  end
+
+  # Rescue de errores automático
+  # result = service.call.rescue_from(ActiveRecord::RecordNotFound) { |e| ... }
+  def rescue_from(exception_class, &block)
+    self
+  rescue exception_class => e
+    block.call(e) if block_given?
+    ServiceResult.failure(errors: e.message)
+  end
+
+  # Helpers para debugging
+
+  def inspect
+    "#<ServiceResult success: #{@success}, data: #{@data.inspect}, errors: #{@errors.inspect}>"
+  end
+end
+# frozen_string_literal: true
+
+module Platform
+  module Tenants
+    class CreateService
+      include ServiceResultHelper
+
+      attr_reader :params, :current_user
+
+      def initialize(params:, current_user: nil)
+        @params = params
+        @current_user = current_user
+      end
+
+      def self.call(**args)
+        new(**args).call
+      end
+
+      def call
+        validation_result = validate_params
+        return validation_result if validation_result.failure?
+
+        ActiveRecord::Base.transaction do
+          tenant = create_tenant
+          return failure(errors: tenant.errors.full_messages) unless tenant.persisted?
+
+          admin_user = find_or_create_admin_user
+          return admin_user if admin_user.failure?
+
+          membership = create_admin_membership(tenant, admin_user.data)
+          return membership if membership.failure?
+
+          set_paper_trail_context(admin_user.data)
+
+          success(
+            data: {
+              tenant: tenant,
+              admin: admin_user.data,
+              membership: membership.data
+            },
+            message: "Tenant created successfully"
+          )
+        end
+      rescue ActiveRecord::RecordInvalid => e
+        failure(errors: e.record.errors.full_messages)
+      rescue StandardError => e
+        Rails.logger.error("[CreateTenantService] Error: #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
+        failure(errors: "Failed to create tenant")
+      end
+
+      private
+
+      def validate_params
+        required_fields = %i[name admin_email admin_first_name admin_last_name]
+        missing_fields = required_fields.select { |f| params[f].blank? }
+        return failure(errors: "Missing required fields: #{missing_fields.join(', ')}") if missing_fields.any?
+
+        return failure(errors: "Invalid admin email format") unless params[:admin_email] =~ URI::MailTo::EMAIL_REGEXP
+        if params[:admin_password].present? && params[:admin_password].length < 8
+          return failure(errors: "Admin password must be at least 8 characters")
+        end
+
+        success(data: { valid: true })
+      end
+
+      def create_tenant
+        tenant_params = {
+          name: params[:name],
+          slug: params[:slug],
+          domain: params[:domain],
+          legal_name: params[:legal_name],
+          tax_id: params[:tax_id],
+          address: params[:address],
+          city: params[:city],
+          state: params[:state],
+          postal_code: params[:postal_code],
+          country: params[:country] || "ES",
+          timezone: params[:timezone] || "Europe/Madrid",
+          locale: params[:locale] || "es",
+          currency: params[:currency] || "EUR",
+          status: params[:status] || "trial",
+          plan: params[:plan] || "trial",
+          created_by: current_user&.id
+        }
+
+        Tenant.create!(tenant_params.compact)
+      end
+
+      def find_or_create_admin_user
+        existing_user = User.find_by(email: params[:admin_email])
+        if existing_user
+          return failure(errors: "Admin user account is deactivated") if existing_user.deleted?
+          return success(data: existing_user)
+        end
+
+        user_params = {
+          email: params[:admin_email],
+          first_name: params[:admin_first_name],
+          last_name: params[:admin_last_name],
+          phone: params[:admin_phone],
+          password: params[:admin_password] || generate_random_password,
+          password_confirmation: params[:admin_password] || generate_random_password,
+          email_verified_at: Time.current
+        }
+
+        user = User.create!(user_params)
+        success(data: user)
+      rescue ActiveRecord::RecordInvalid => e
+        failure(errors: e.record.errors.full_messages)
+      end
+
+      def create_admin_membership(tenant, admin_user)
+        admin_role = Role.find_by!(slug: "tenant_admin")
+
+        membership_params = {
+          user: admin_user,
+          tenant: tenant,
+          role_id: admin_role.id,
+          is_primary_admin: true,
+          status: "active",
+          is_default: true,
+          created_by: current_user&.id
+        }
+
+        membership = TenantMembership.create!(membership_params)
+        success(data: membership)
+      rescue ActiveRecord::RecordInvalid => e
+        failure(errors: e.record.errors.full_messages)
+      end
+
+      def generate_random_password
+        SecureRandom.urlsafe_base64(12)
+      end
+
+      def set_paper_trail_context(user)
+        PaperTrail.request.whodunnit = user.id
+        PaperTrail.request.controller_info = {
+          metadata: { performed_action: "create_tenant" }
+        }
+      end
+    end
+  end
+end
+# frozen_string_literal: true
+
+module Platform
+  module Tenants
+    # Servicio para invitar un usuario a un tenant
+    # Crea el usuario si no existe y crea la membresía con estado 'invited'
+    #
+    # Uso:
+    #   result = InviteService.call(
+    #     tenant: tenant,
+    #     email: 'newuser@example.com',
+    #     first_name: 'Jane',
+    #     last_name: 'Doe',
+    #     role: 'manager',
+    #     invited_by: current_user
+    #   )
+
+    class InviteService
+      include ServiceResultHelper
+
+      attr_reader :tenant, :params, :invited_by
+
+      def initialize(tenant:, params:, invited_by:)
+        @tenant = tenant
+        @params = params
+        @invited_by = invited_by
+      end
+
+      def self.call(**args)
+        new(**args).call
+      end
+
+      def call
+        # Validar parámetros
+        validation_result = validate_params
+        return validation_result if validation_result.failure?
+
+        # Validar límite de usuarios del tenant
+        return failure(errors: "User limit reached for this tenant") if tenant.user_limit_reached?
+
+        # Validar que invited_by tenga permisos
+        return failure(errors: "Not authorized") unless can_invite?
+
+        ActiveRecord::Base.transaction do
+          # Encontrar o crear usuario
+          user_result = find_or_create_user
+          return user_result if user_result.failure?
+
+          user = user_result.data
+
+          # Verificar que no tenga membresía activa
+          if user.has_tenant_access?(tenant.id)
+            return failure(errors: "User already has access to this tenant")
+          end
+
+          # Crear membresía de invitación
+          membership = create_invitation_membership(user)
+          return membership if membership.failure?
+
+          # Configurar PaperTrail
+          set_paper_trail_context
+
+          # TODO: Enviar email de invitación (Fase futura)
+          # InvitationMailer.invite(membership.data).deliver_later
+
+          success(
+            data: {
+              user: user,
+              membership: membership.data,
+              invitation_token: membership.data.invitation_token
+            },
+            message: "User invited successfully"
+          )
+        end
+      rescue StandardError => e
+        Rails.logger.error("[InviteUserService] Error: #{e.message}")
+        failure(errors: "Failed to invite user")
+      end
+
+      private
+
+      # Validar parámetros
+      def validate_params
+        required_fields = %i[email first_name last_name role]
+        missing_fields = required_fields.select { |field| params[field].blank? }
+
+        if missing_fields.any?
+          return failure(
+            errors: "Missing required fields: #{missing_fields.join(', ')}"
+          )
+        end
+
+        # Validar email
+        unless params[:email] =~ URI::MailTo::EMAIL_REGEXP
+          return failure(errors: "Invalid email format")
+        end
+
+        # Validar rol
+        unless TenantMembership.ROLES.include?(params[:role])
+          return failure(
+            errors: "Invalid role. Must be one of: #{TenantMembership.ROLES.join(', ')}"
+          )
+        end
+
+        success(data: { valid: true })
+      end
+
+      # Verificar permisos del invitador
+      def can_invite?
+        # El invitador debe ser admin o manager del tenant
+        role = invited_by.tenant_role(tenant.id)
+        role.in?(%w[admin manager])
+      end
+
+      # Encontrar o crear usuario
+      def find_or_create_user
+        email = params[:email].downcase.strip
+        existing_user = User.find_by_email(email)
+
+        if existing_user
+          # Usuario existe
+          if existing_user.deleted?
+            return failure(errors: "User account is deactivated")
+          end
+
+          return success(data: existing_user)
+        end
+
+        # Crear nuevo usuario sin password (lo establecerá al aceptar invitación)
+        user_params = {
+          email: email,
+          first_name: params[:first_name],
+          last_name: params[:last_name],
+          phone: params[:phone],
+          password: generate_temporary_password,
+          password_confirmation: generate_temporary_password,
+          invited_by: invited_by
+        }
+
+        user = User.create!(user_params)
+        success(data: user)
+      rescue ActiveRecord::RecordInvalid => e
+        failure(errors: e.record.errors.full_messages)
+      end
+
+      # Crear membresía de invitación
+      def create_invitation_membership(user)
+        membership_params = {
+          user: user,
+          tenant: tenant,
+          role: params[:role],
+          status: "invited",
+          is_primary_admin: false,
+          is_default: false,
+          created_by: invited_by.id
+        }
+
+        membership = TenantMembership.create!(membership_params)
+        success(data: membership)
+      rescue ActiveRecord::RecordInvalid => e
+        failure(errors: e.record.errors.full_messages)
+      end
+
+      # Generar password temporal
+      def generate_temporary_password
+        SecureRandom.urlsafe_base64(16)
+      end
+
+      # Configurar PaperTrail
+      def set_paper_trail_context
+        PaperTrail.request.whodunnit = invited_by.id
+        PaperTrail.request.controller_info = {
+          metadata: {
+            tenant_id: tenant.id,
+            performed_action: "invite_user" }
+        }
+      end
+    end
+  end
+end
+# frozen_string_literal: true
+
+# Query para obtener todos los contextos disponibles para un usuario
+# Usado tanto en login como en endpoints que necesiten listar contextos
+#
+# Uso:
+#   contexts = AvailableContextsQuery.new(user).call
+#
+# Retorna un array de hashes con:
+# - Platform contexts: { type: 'platform', role: 'super_admin', ... }
+# - Tenant contexts: { type: 'tenant', tenant_id: 1, tenant_name: '...', role: 'admin', ... }
+
+class AvailableContextsQuery
+  attr_reader :user
+
+  def initialize(user)
+    @user = user
+  end
+
+  def call
+    contexts = []
+
+    # Agregar contexto platform si existe
+    if platform_context = get_platform_context
+      contexts << platform_context
+    end
+
+    # Agregar contextos tenant
+    contexts += get_tenant_contexts
+
+    contexts
+  end
+
+  # Verificar si el usuario tiene múltiples contextos
+  def multiple_contexts?
+    call.size > 1
+  end
+
+  # Obtener contexto por defecto (si existe)
+  def default_context
+    # Si tiene platform membership, ese es el default
+    return get_platform_context if user.platform_membership.present?
+
+    # Si tiene un tenant default, ese es
+    default_membership = user.tenant_memberships.find_by(is_default: true, status: "active")
+    return build_tenant_context(default_membership) if default_membership
+
+    # Si solo tiene uno, ese es el default
+    contexts = call
+    return contexts.first if contexts.size == 1
+
+    nil
+  end
+
+  private
+
+  # Obtener contexto de plataforma
+  def get_platform_context
+    return nil unless user.platform_membership.present?
+    return nil if user.platform_membership.deleted?
+
+    membership = user.platform_membership
+
+    {
+      type: "platform",
+      role_id: membership.role_id,
+      role: membership.role.slug,
+      role_name: membership.role.name,
+      context: "platform",
+      tenant_id: nil,
+      display_name: "Platform - #{membership.role.name}",
+      is_default: true, # Platform siempre es default si existe
+      created_at: membership.created_at.iso8601,
+      # Metadata adicional
+      can_impersonate: membership.can_impersonate?,
+      mfa_required: membership.support_admin?
+    }
+  end
+
+  # Obtener contextos de tenant
+  def get_tenant_contexts
+    user.tenant_memberships
+        .active
+        .kept
+        .includes(:tenant, :role)
+        .where(tenants: { deleted_at: nil }) # Solo tenants activos
+        .map { |membership| build_tenant_context(membership) }
+  end
+
+  # Construir hash de contexto tenant
+  def build_tenant_context(membership)
+    {
+      type: "tenant",
+      tenant_id: membership.tenant_id,
+      tenant_name: membership.tenant.name,
+      tenant_slug: membership.tenant.slug,
+      tenant_status: membership.tenant.status,
+      role_id: membership.role_id,
+      role: membership.role&.slug || membership.role, # Fallback a string si no hay role_id
+      role_name: membership.role&.name || membership.role.titleize,
+      is_primary_admin: membership.is_primary_admin?,
+      is_default: membership.is_default?,
+      membership_status: membership.status,
+      context: "tenant",
+      display_name: "#{membership.tenant.name} - #{membership.role&.name || membership.role.titleize}",
+      created_at: membership.created_at.iso8601,
+      # Metadata adicional
+      tenant_trial: membership.tenant.trial?,
+      tenant_trial_days_remaining: membership.tenant.trial? ? membership.tenant.trial_days_remaining : nil
+    }
+  end
+end
+
+# frozen_string_literal: true
+
+# Middleware para establecer el contexto de tenant en cada request
+# Lee el tenant_id del JWT y lo establece en ActsAsTenant.current_tenant
+# Esto asegura que todas las queries estén scoped al tenant correcto
+
+class TenantContext
+  def initialize(app)
+    @app = app
+  end
+
+  def call(env)
+    # Obtener tenant_id del token JWT
+    tenant_id = extract_tenant_id_from_token(env)
+
+    if tenant_id.present?
+      # Buscar tenant
+      tenant = Tenant.find_by(id: tenant_id)
+
+      if tenant&.active?
+        # Establecer contexto de tenant para este request
+        ActsAsTenant.with_tenant(tenant) do
+          @app.call(env)
+        end
+      else
+        # Tenant no encontrado o inactivo
+        error_response(
+          "Invalid or inactive tenant",
+          401,
+          env
+        )
+      end
+    else
+      # Sin tenant_id (puede ser usuario de plataforma o endpoint público)
+      # Ejecutar sin tenant context
+      ActsAsTenant.without_tenant do
+        @app.call(env)
+      end
+    end
+  rescue ActsAsTenant::Errors::NoTenantSet => e
+    Rails.logger.error("[TenantContext] No tenant set: #{e.message}")
+    error_response("Tenant context required", 400, env)
+  rescue StandardError => e
+    Rails.logger.error("[TenantContext] Error: #{e.class.name} - #{e.message}")
+    error_response("Tenant context error", 500, env)
+  end
+
+  private
+
+  # Extraer tenant_id del token JWT
+  def extract_tenant_id_from_token(env)
+    # Obtener header de autorización
+    auth_header = env["HTTP_AUTHORIZATION"]
+    return nil unless auth_header
+
+    # Extraer token
+    match = auth_header.match(/^Bearer\s+(.+)$/i)
+    return nil unless match
+
+    token = match[1]
+
+    # Decodificar token sin validación completa (solo peek)
+    payload = Authentication::JwtDecoder.peek(token)
+    return nil unless payload
+
+    # Retornar tenant_id del payload
+    payload = Authentication::JwtDecoder.peek(token)&.deep_symbolize_keys
+    payload[:tenant_id]
+  rescue StandardError => e
+    Rails.logger.debug("[TenantContext] Failed to extract tenant_id: #{e.message}")
+    nil
+  end
+
+  # Respuesta de error
+  def error_response(message, status, env)
+    body = {
+      success: false,
+      error: {
+        message: message,
+        status: status,
+        timestamp: Time.current.iso8601
+      }
+    }.to_json
+
+    headers = {
+      "Content-Type" => "application/json",
+      "Content-Length" => body.bytesize.to_s
+    }
+
+    [ status, headers, [ body ] ]
+  end
+end
