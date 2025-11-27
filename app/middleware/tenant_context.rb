@@ -19,7 +19,7 @@ class TenantContext
       end
     elsif tenant_id.present?
       # Contexto tenant normal
-      tenant = Tenant.find_by(id: tenant_id)
+      tenant = ::Tenant.find_by(id: tenant_id)
 
       if tenant&.active?
         # Establecer contexto de tenant para este request

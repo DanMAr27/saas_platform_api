@@ -1,18 +1,7 @@
-# frozen_string_literal: true
+# app/api/v1/helpers/authentication_helper.rb
 
 module V1
   module Helpers
-    # Helper para autenticación en Grape API
-    # Proporciona métodos para autenticar requests y obtener el usuario actual
-    #
-    # Uso en endpoints:
-    #   helpers AuthenticationHelper
-    #
-    #   get :profile do
-    #     authenticate!
-    #     current_user.to_json
-    #   end
-
     module AuthenticationHelper
       # Obtener el usuario actual del token JWT
       # @return [User, nil]
@@ -27,9 +16,13 @@ module V1
         if result.success?
           @current_user = result.meta[:user]
           @current_payload = result.data
+
+          # 🔥 ESTABLECER TENANT SEGÚN CONTEXTO
+          setup_tenant_context!
         else
           @current_user = nil
           @current_payload = nil
+          ActsAsTenant.current_tenant = nil
         end
 
         @current_user
@@ -49,7 +42,6 @@ module V1
       end
 
       # Forzar autenticación (lanzar error si no está autenticado)
-      # Usar en endpoints que requieren autenticación
       def authenticate!
         return if authenticated?
 
@@ -117,6 +109,34 @@ module V1
         # Formato: "Bearer {token}"
         match = auth_header.match(/^Bearer\s+(.+)$/i)
         match ? match[1] : nil
+      end
+
+      # Establecer el tenant context según el JWT
+      def setup_tenant_context!
+        context = @current_payload[:context]
+
+        case context
+        when "platform"
+          # Contexto de plataforma: NO establecer tenant
+          # Platform admins operan sin tenant context por defecto
+          ActsAsTenant.current_tenant = nil
+
+        when "tenant"
+          # Contexto de tenant: establecer el tenant del JWT
+          tenant_id = @current_payload[:tenant_id]
+
+          if tenant_id.present?
+            tenant = ::Tenant.find_by(id: tenant_id)
+            ActsAsTenant.current_tenant = tenant if tenant
+          else
+            # Token de tenant sin tenant_id es inválido
+            ActsAsTenant.current_tenant = nil
+          end
+
+        else
+          # Contexto desconocido
+          ActsAsTenant.current_tenant = nil
+        end
       end
     end
   end

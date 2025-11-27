@@ -208,7 +208,7 @@ module V1
               )
             end
 
-            Tenant.find(params[:tenant_id])
+            ::Tenant.find(params[:tenant_id])
           else
             require_tenant!
             verify_tenant_access!

@@ -1,4 +1,3 @@
-# frozen_string_literal: true
 
 # Migración para la tabla de versiones de PaperTrail
 # Esta tabla almacena el historial completo de cambios en los modelos auditados
@@ -652,6 +651,301 @@ class UpdateTenantMembershipsWithRoleId < ActiveRecord::Migration[8.0]
     # Nota: No eliminamos la columna 'role' (string) para mantener compatibilidad
     # En el futuro, una vez migrados todos los datos, se puede eliminar
     # con otra migración
+  end
+end
+
+# db/migrate/XXXXXX_create_organizational_node_levels.rb
+# Niveles de la jerarquía organizacional (ej: branch, division, department)
+
+class CreateOrganizationalNodeLevels < ActiveRecord::Migration[8.0]
+  def change
+    create_table :organizational_node_levels do |t|
+      # Relación con tenant
+      t.bigint :tenant_id, null: false
+
+      # Identificación del nivel
+      t.string :name, null: false, limit: 100
+      t.string :slug, null: false, limit: 100
+      t.text :description
+
+      # Orden jerárquico (1 = nivel más alto, 2 = siguiente nivel, etc.)
+      t.integer :level_order, null: false, default: 1
+
+      # Configuración
+      t.boolean :allows_vehicles, default: true, null: false
+      t.boolean :allows_users, default: true, null: false
+      t.boolean :is_system, default: false, null: false
+
+      # Metadata
+      t.jsonb :settings, default: {}
+
+      # Auditoría
+      t.bigint :created_by
+      t.datetime :deleted_at
+      t.bigint :deleted_by
+
+      t.timestamps
+    end
+
+    # Índices
+    add_index :organizational_node_levels, :tenant_id
+    add_index :organizational_node_levels, [ :tenant_id, :slug ],
+              unique: true,
+              name: 'index_org_node_levels_on_tenant_and_slug',
+              where: 'deleted_at IS NULL'
+    add_index :organizational_node_levels, :level_order
+    add_index :organizational_node_levels, :deleted_at
+
+    # Foreign keys
+    add_foreign_key :organizational_node_levels, :tenants, on_delete: :cascade
+    add_foreign_key :organizational_node_levels, :users, column: :created_by, on_delete: :nullify
+  end
+end
+
+# db/migrate/XXXXXX_create_organizational_nodes.rb
+# Nodos de la estructura organizacional (sucursales, divisiones, departamentos)
+
+class CreateOrganizationalNodes < ActiveRecord::Migration[8.0]
+  def change
+    create_table :organizational_nodes do |t|
+      # Relación con tenant
+      t.bigint :tenant_id, null: false
+
+      # Nivel y jerarquía
+      t.bigint :level_id, null: false
+      t.bigint :parent_id # Nodo padre (null = raíz)
+
+      # Identificación
+      t.string :name, null: false, limit: 255
+      t.string :code, limit: 50
+      t.text :description
+
+      # Ubicación física
+      t.string :address, limit: 500
+      t.string :city, limit: 100
+      t.string :state, limit: 100
+      t.string :postal_code, limit: 20
+      t.string :country, limit: 2
+
+      # Contacto
+      t.string :phone, limit: 20
+      t.string :email, limit: 255
+
+      # Estado
+      t.string :status, limit: 20, default: 'active', null: false
+
+      # Metadata
+      t.jsonb :metadata, default: {}
+
+      # Auditoría
+      t.bigint :created_by
+      t.datetime :deleted_at
+      t.bigint :deleted_by
+
+      t.timestamps
+    end
+    # Índices
+    add_index :organizational_nodes, :tenant_id
+    add_index :organizational_nodes, :level_id
+    add_index :organizational_nodes, :parent_id
+    add_index :organizational_nodes, [ :tenant_id, :code ],
+              unique: true,
+              where: 'code IS NOT NULL AND deleted_at IS NULL'
+    add_index :organizational_nodes, :status
+    add_index :organizational_nodes, :deleted_at
+
+    # Foreign keys
+    add_foreign_key :organizational_nodes, :tenants, on_delete: :cascade
+    add_foreign_key :organizational_nodes, :organizational_node_levels, column: :level_id, on_delete: :restrict
+    add_foreign_key :organizational_nodes, :organizational_nodes, column: :parent_id, on_delete: :restrict
+    add_foreign_key :organizational_nodes, :users, column: :created_by, on_delete: :nullify
+  end
+end
+
+# db/migrate/XXXXXX_create_organizational_node_closures.rb
+# Tabla de closure para queries eficientes de ancestros/descendientes
+
+class CreateOrganizationalNodeClosures < ActiveRecord::Migration[8.0]
+  def change
+    create_table :organizational_node_closures do |t|
+      t.bigint :ancestor_id, null: false
+      t.bigint :descendant_id, null: false
+      t.integer :depth, null: false, default: 0
+
+      t.timestamps
+    end
+
+    # Índices
+    add_index :organizational_node_closures, [ :ancestor_id, :descendant_id ],
+              unique: true,
+              name: 'index_org_node_closures_on_ancestor_and_descendant'
+    add_index :organizational_node_closures, :ancestor_id
+    add_index :organizational_node_closures, :descendant_id
+    add_index :organizational_node_closures, :depth
+
+    # Foreign keys
+    add_foreign_key :organizational_node_closures, :organizational_nodes,
+                    column: :ancestor_id, on_delete: :cascade
+    add_foreign_key :organizational_node_closures, :organizational_nodes,
+                    column: :descendant_id, on_delete: :cascade
+  end
+end
+
+# db/migrate/XXXXXX_create_user_node_scopes.rb
+# Scopes de acceso a nodos organizacionales para usuarios
+
+class CreateUserNodeScopes < ActiveRecord::Migration[8.0]
+  def change
+    create_table :user_node_scopes do |t|
+      # Relación usuario-nodo
+      t.bigint :user_id, null: false
+      t.bigint :organizational_node_id, null: false
+      t.bigint :tenant_id, null: false
+
+      # Tipo de acceso
+      t.string :access_type, limit: 20, default: 'read', null: false # read, write, admin
+
+      # ¿Incluye nodos hijos?
+      t.boolean :include_children, default: true, null: false
+
+      # Auditoría
+      t.bigint :created_by
+      t.datetime :deleted_at
+      t.bigint :deleted_by
+
+      t.timestamps
+    end
+
+    # Índices
+    add_index :user_node_scopes, :user_id
+    add_index :user_node_scopes, :organizational_node_id
+    add_index :user_node_scopes, :tenant_id
+    add_index :user_node_scopes, [ :user_id, :organizational_node_id, :tenant_id ],
+              unique: true,
+              name: 'index_user_node_scopes_unique',
+              where: 'deleted_at IS NULL'
+    add_index :user_node_scopes, :deleted_at
+
+    # Foreign keys
+    add_foreign_key :user_node_scopes, :users, on_delete: :cascade
+    add_foreign_key :user_node_scopes, :organizational_nodes, on_delete: :cascade
+    add_foreign_key :user_node_scopes, :tenants, on_delete: :cascade
+    add_foreign_key :user_node_scopes, :users, column: :created_by, on_delete: :nullify
+  end
+end
+# db/migrate/XXXXXX_create_vehicles.rb
+# Vehículos de la flota
+
+class CreateVehicles < ActiveRecord::Migration[8.0]
+  def change
+    create_table :vehicles do |t|
+      # Relación con tenant
+      t.bigint :tenant_id, null: false
+
+      # Relación con nodo organizacional (opcional)
+      t.bigint :organizational_node_id
+
+      # Identificación del vehículo
+      t.string :name, null: false, limit: 255
+      t.string :license_plate, null: false, limit: 20
+      t.string :vin, limit: 50 # Vehicle Identification Number
+      t.string :fleet_number, limit: 50
+
+      # Tipo y marca
+      t.string :vehicle_type, limit: 50 # car, truck, van, motorcycle, etc.
+      t.string :make, limit: 100 # Marca
+      t.string :model, limit: 100 # Modelo
+      t.integer :year
+
+      # Estado y mantenimiento
+      t.string :status, limit: 20, default: 'active', null: false
+      t.date :purchase_date
+      t.date :registration_expires_at
+      t.date :insurance_expires_at
+      t.date :last_maintenance_date
+      t.integer :odometer # Kilometraje actual
+
+      # Características
+      t.string :color, limit: 50
+      t.string :fuel_type, limit: 20 # gasoline, diesel, electric, hybrid
+      t.decimal :fuel_capacity, precision: 10, scale: 2
+      t.integer :passenger_capacity
+
+      # Metadata y configuración
+      t.jsonb :metadata, default: {}
+      t.jsonb :specifications, default: {}
+
+      # Auditoría
+      t.bigint :created_by
+      t.datetime :deleted_at
+      t.bigint :deleted_by
+
+      t.timestamps
+    end
+
+    # Índices
+    add_index :vehicles, :tenant_id
+    add_index :vehicles, :organizational_node_id
+    add_index :vehicles, [ :tenant_id, :license_plate ],
+              unique: true,
+              where: 'deleted_at IS NULL'
+    add_index :vehicles, [ :tenant_id, :fleet_number ],
+              unique: true,
+              where: 'fleet_number IS NOT NULL AND deleted_at IS NULL'
+    add_index :vehicles, :status
+    add_index :vehicles, :vehicle_type
+    add_index :vehicles, :deleted_at
+
+    # Foreign keys
+    add_foreign_key :vehicles, :tenants, on_delete: :cascade
+    add_foreign_key :vehicles, :organizational_nodes, on_delete: :nullify
+    add_foreign_key :vehicles, :users, column: :created_by, on_delete: :nullify
+  end
+end
+
+# db/migrate/XXXXXX_create_user_vehicle_scopes.rb
+# Scopes de acceso a vehículos específicos para usuarios
+
+class CreateUserVehicleScopes < ActiveRecord::Migration[8.0]
+  def change
+    create_table :user_vehicle_scopes do |t|
+      # Relación usuario-vehículo
+      t.bigint :user_id, null: false
+      t.bigint :vehicle_id, null: false
+      t.bigint :tenant_id, null: false
+
+      # Tipo de acceso
+      t.string :access_type, limit: 20, default: 'read', null: false # read, write, drive
+
+      # Periodo de acceso (opcional)
+      t.datetime :valid_from
+      t.datetime :valid_until
+
+      # Auditoría
+      t.bigint :created_by
+      t.datetime :deleted_at
+      t.bigint :deleted_by
+
+      t.timestamps
+    end
+
+    # Índices
+    add_index :user_vehicle_scopes, :user_id
+    add_index :user_vehicle_scopes, :vehicle_id
+    add_index :user_vehicle_scopes, :tenant_id
+    add_index :user_vehicle_scopes, [ :user_id, :vehicle_id, :tenant_id ],
+              unique: true,
+              name: 'index_user_vehicle_scopes_unique',
+              where: 'deleted_at IS NULL'
+    add_index :user_vehicle_scopes, :deleted_at
+    add_index :user_vehicle_scopes, :valid_from
+    add_index :user_vehicle_scopes, :valid_until
+
+    # Foreign keys
+    add_foreign_key :user_vehicle_scopes, :users, on_delete: :cascade
+    add_foreign_key :user_vehicle_scopes, :vehicles, on_delete: :cascade
+    add_foreign_key :user_vehicle_scopes, :tenants, on_delete: :cascade
+    add_foreign_key :user_vehicle_scopes, :users, column: :created_by, on_delete: :nullify
   end
 end
 
@@ -2269,5 +2563,761 @@ class User < ApplicationRecord
   # Password requerido solo si no hay invitación pendiente
   def password_required?
     !persisted? || !password.nil? || !password_confirmation.nil?
+  end
+end
+
+# app/models/organizational_node_level.rb
+
+class OrganizationalNodeLevel < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+  include Tenantable
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :tenant
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  has_many :organizational_nodes, foreign_key: :level_id, dependent: :restrict_with_error
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :name, presence: true, length: { maximum: 100 }
+  validates :slug, presence: true,
+            uniqueness: { scope: :tenant_id, conditions: -> { where(deleted_at: nil) } },
+            format: { with: /\A[a-z0-9_]+\z/, message: "only lowercase, numbers and underscores" }
+  validates :level_order, presence: true, numericality: { only_integer: true, greater_than: 0 }
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  before_validation :generate_slug, if: -> { slug.blank? }
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :by_order, -> { order(:level_order, :name) }
+  scope :system_levels, -> { where(is_system: true) }
+  scope :custom_levels, -> { where(is_system: false) }
+  scope :allows_vehicles, -> { where(allows_vehicles: true) }
+  scope :allows_users, -> { where(allows_users: true) }
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Crear niveles base del sistema
+    def create_default_levels_for_tenant(tenant)
+      [
+        { name: "Company", slug: "company", level_order: 1, is_system: true },
+        { name: "Region", slug: "region", level_order: 2, is_system: true },
+        { name: "Branch", slug: "branch", level_order: 3, is_system: true },
+        { name: "Department", slug: "department", level_order: 4, is_system: true }
+      ].each do |level_attrs|
+        find_or_create_by!(tenant: tenant, slug: level_attrs[:slug]) do |level|
+          level.name = level_attrs[:name]
+          level.level_order = level_attrs[:level_order]
+          level.is_system = level_attrs[:is_system]
+          level.allows_vehicles = true
+          level.allows_users = true
+        end
+      end
+    end
+  end
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  def display_name
+    "#{name} (Level #{level_order})"
+  end
+
+  def to_s
+    name
+  end
+
+  # Verificar si hay nodos en este nivel
+  def has_nodes?
+    organizational_nodes.exists?
+  end
+
+  # Obtener el siguiente nivel inferior
+  def next_level
+    self.class.where(tenant_id: tenant_id)
+              .where("level_order > ?", level_order)
+              .order(:level_order)
+              .first
+  end
+
+  # Obtener el nivel superior
+  def previous_level
+    self.class.where(tenant_id: tenant_id)
+              .where("level_order < ?", level_order)
+              .order(level_order: :desc)
+              .first
+  end
+
+  private
+
+  def generate_slug
+    return if name.blank?
+    self.slug = name.parameterize.underscore
+  end
+end
+
+# app/models/organizational_node.rb
+# Nodo de la estructura organizacional (sucursal, división, departamento)
+
+class OrganizationalNode < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+  include Tenantable
+
+  # ============================================
+  # ENUMS
+  # ============================================
+  STATUSES = %w[active inactive].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :tenant
+  belongs_to :level, class_name: "OrganizationalNodeLevel", foreign_key: :level_id
+  belongs_to :parent, class_name: "OrganizationalNode", optional: true
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  has_many :children, class_name: "OrganizationalNode",
+           foreign_key: :parent_id,
+           dependent: :restrict_with_error
+
+  # Closure table associations
+  has_many :ancestor_closures, class_name: "OrganizationalNodeClosure",
+           foreign_key: :descendant_id,
+           dependent: :destroy
+  has_many :descendant_closures, class_name: "OrganizationalNodeClosure",
+           foreign_key: :ancestor_id,
+           dependent: :destroy
+
+  has_many :ancestors, through: :ancestor_closures, source: :ancestor
+  has_many :descendants, through: :descendant_closures, source: :descendant
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :name, presence: true, length: { maximum: 255 }
+  validates :status, inclusion: { in: STATUSES }
+  validates :code, uniqueness: { scope: :tenant_id, allow_nil: true, conditions: -> { where(deleted_at: nil) } }
+  validates :email, format: { with: URI::MailTo::EMAIL_REGEXP, allow_blank: true }
+  validate :parent_must_be_higher_level
+  validate :parent_must_be_same_tenant
+  validate :prevent_circular_reference
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  after_create :create_closure_records
+  after_update :update_closure_records, if: :saved_change_to_parent_id?
+  before_destroy :check_if_has_children
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :active, -> { where(status: "active") }
+  scope :inactive, -> { where(status: "inactive") }
+  scope :roots, -> { where(parent_id: nil) }
+  scope :by_level, ->(level_id) { where(level_id: level_id) }
+  scope :by_name, -> { order(:name) }
+  scope :with_level, -> { includes(:level) }
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Obtener árbol completo
+    def tree(parent = nil)
+      nodes = parent ? parent.children : roots
+      nodes.active.includes(:level, :children).order(:name)
+    end
+
+    # Buscar por ruta completa (ej: "Company/Region/Branch")
+    def find_by_path(path, tenant:)
+      names = path.split("/")
+      current_node = nil
+
+      names.each do |name|
+        query = where(tenant: tenant, name: name.strip)
+        query = query.where(parent: current_node)
+        current_node = query.first
+        return nil unless current_node
+      end
+
+      current_node
+    end
+  end
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Verificar si es nodo raíz
+  def root?
+    parent_id.nil?
+  end
+
+  # Verificar si tiene hijos
+  def leaf?
+    children.empty?
+  end
+
+  # Verificar si es ancestro de otro nodo
+  def ancestor_of?(other_node)
+    other_node.ancestors.include?(self)
+  end
+
+  # Verificar si es descendiente de otro nodo
+  def descendant_of?(other_node)
+    ancestors.include?(other_node)
+  end
+
+  # Obtener todos los ancestros ordenados (padres, abuelos, etc.)
+  def ancestor_chain
+    ancestors.joins(:level)
+             .where.not(id: id)
+             .order("organizational_node_levels.level_order")
+  end
+
+  # Obtener todos los descendientes ordenados (hijos, nietos, etc.)
+  def descendant_tree
+    descendants.joins(:level)
+               .where.not(id: id)
+               .order("organizational_node_levels.level_order")
+  end
+
+  # Obtener hijos directos activos
+  def direct_children
+    children.active.includes(:level).order(:name)
+  end
+
+  # Obtener profundidad del nodo (0 = raíz, 1 = hijo directo de raíz, etc.)
+  def depth
+    return 0 if root?
+    ancestor_closures.where.not(ancestor_id: id).maximum(:depth) || 0
+  end
+
+  # Ruta completa del nodo (ej: "Company > Region > Branch")
+  def full_path(separator: " > ")
+    ancestor_chain.pluck(:name).push(name).join(separator)
+  end
+
+  # Ruta completa con códigos (ej: "COMP/REG-N/BCN-01")
+  def code_path(separator: "/")
+    path_nodes = ancestor_chain.to_a + [ self ]
+    path_nodes.map { |n| n.code || n.name }.join(separator)
+  end
+
+  # Obtener raíz del árbol
+  def root_node
+    return self if root?
+    ancestors.roots.first
+  end
+
+  # Obtener todos los hermanos (nodos con el mismo padre)
+  def siblings
+    if parent_id
+      parent.children.where.not(id: id)
+    else
+      self.class.roots.where(tenant_id: tenant_id).where.not(id: id)
+    end
+  end
+
+  # Mover nodo a otro padre
+  def move_to(new_parent)
+    return false if new_parent && new_parent.descendant_of?(self)
+
+    update(parent: new_parent)
+  end
+
+  # Display
+  def display_name
+    "#{name} (#{level.name})"
+  end
+
+  def to_s
+    name
+  end
+
+  # Información de ubicación
+  def location_summary
+    parts = [ address, city, state, postal_code, country ].compact
+    parts.join(", ")
+  end
+
+  # Estadísticas
+  def stats
+    {
+      depth: depth,
+      children_count: children.count,
+      descendants_count: descendants.count,
+      is_root: root?,
+      is_leaf: leaf?
+    }
+  end
+
+  private
+
+  # Validar que el padre sea de nivel superior
+  def parent_must_be_higher_level
+    return unless parent_id.present? && level_id.present?
+    return unless parent.present?
+
+    if parent.level.level_order >= level.level_order
+      errors.add(:parent_id, "must be of a higher level")
+    end
+  end
+
+  # Validar mismo tenant
+  def parent_must_be_same_tenant
+    return unless parent_id.present?
+    return unless parent.present?
+
+    if parent.tenant_id != tenant_id
+      errors.add(:parent_id, "must belong to the same tenant")
+    end
+  end
+
+  # Prevenir referencia circular
+  def prevent_circular_reference
+    return unless parent_id.present?
+
+    if parent_id == id
+      errors.add(:parent_id, "cannot be itself")
+    elsif parent&.ancestor_of?(self)
+      errors.add(:parent_id, "would create a circular reference")
+    end
+  end
+
+  # Crear registros en closure table
+  def create_closure_records
+    # Self-reference
+    OrganizationalNodeClosure.create!(
+      ancestor_id: id,
+      descendant_id: id,
+      depth: 0
+    )
+
+    # Copiar todos los ancestros del padre
+    if parent_id.present?
+      parent.ancestor_closures.each do |closure|
+        OrganizationalNodeClosure.create!(
+          ancestor_id: closure.ancestor_id,
+          descendant_id: id,
+          depth: closure.depth + 1
+        )
+      end
+    end
+  end
+
+  # Actualizar closure table cuando cambia el padre
+  def update_closure_records
+    # Eliminar closures antiguos (excepto self-reference)
+    OrganizationalNodeClosure.where(descendant_id: id)
+                             .where.not(ancestor_id: id)
+                             .delete_all
+
+    # Recrear closures para el nuevo padre
+    if parent_id.present?
+      parent.ancestor_closures.each do |closure|
+        OrganizationalNodeClosure.create!(
+          ancestor_id: closure.ancestor_id,
+          descendant_id: id,
+          depth: closure.depth + 1
+        )
+      end
+    end
+
+    # Actualizar descendientes
+    update_descendant_closures
+  end
+
+  # Actualizar closures de descendientes
+  def update_descendant_closures
+    descendants.each do |descendant|
+      descendant.send(:update_closure_records)
+    end
+  end
+
+  # Prevenir eliminación si tiene hijos
+  def check_if_has_children
+    if children.exists?
+      errors.add(:base, "Cannot delete node with children")
+      throw :abort
+    end
+  end
+end
+
+# app/models/organizational_node_closure.rb
+# Tabla de closure para queries jerárquicas eficientes
+
+class OrganizationalNodeClosure < ApplicationRecord
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :ancestor, class_name: "OrganizationalNode"
+  belongs_to :descendant, class_name: "OrganizationalNode"
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :ancestor_id, presence: true
+  validates :descendant_id, presence: true
+  validates :depth, presence: true,
+            numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :direct_children, -> { where(depth: 1) }
+  scope :self_references, -> { where("ancestor_id = descendant_id") }
+  scope :excluding_self, -> { where("ancestor_id != descendant_id") }
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Reconstruir toda la closure table (útil para migraciones)
+    def rebuild!
+      transaction do
+        delete_all
+
+        OrganizationalNode.find_each do |node|
+          # Self-reference
+          create!(ancestor_id: node.id, descendant_id: node.id, depth: 0)
+
+          # Ancestros
+          node.parent&.ancestor_closures&.each do |closure|
+            create!(
+              ancestor_id: closure.ancestor_id,
+              descendant_id: node.id,
+              depth: closure.depth + 1
+            )
+          end
+        end
+      end
+    end
+
+    # Verificar integridad
+    def verify_integrity
+      errors = []
+
+      # Verificar que todos los nodos tienen self-reference
+      OrganizationalNode.find_each do |node|
+        unless exists?(ancestor_id: node.id, descendant_id: node.id, depth: 0)
+          errors << "Missing self-reference for node #{node.id}"
+        end
+      end
+
+      errors
+    end
+  end
+end
+
+# app/models/vehicle.rb
+# Vehículo de la flota
+
+class Vehicle < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+  include Tenantable
+
+  # ============================================
+  # ENUMS
+  # ============================================
+  STATUSES = %w[active inactive maintenance].freeze
+  VEHICLE_TYPES = %w[car truck van motorcycle bus trailer].freeze
+  FUEL_TYPES = %w[gasoline diesel electric hybrid].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :tenant
+  belongs_to :organizational_node, optional: true
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  has_many :user_vehicle_scopes, dependent: :destroy
+  has_many :scoped_users, through: :user_vehicle_scopes, source: :user
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :name, presence: true, length: { maximum: 255 }
+  validates :license_plate, presence: true,
+            uniqueness: { scope: :tenant_id, conditions: -> { where(deleted_at: nil) } }
+  validates :fleet_number, uniqueness: { scope: :tenant_id, allow_nil: true }
+  validates :status, inclusion: { in: STATUSES }
+  validates :vehicle_type, inclusion: { in: VEHICLE_TYPES }, allow_nil: true
+  validates :fuel_type, inclusion: { in: FUEL_TYPES }, allow_nil: true
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  before_validation :normalize_license_plate
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :active, -> { where(status: "active") }
+  scope :inactive, -> { where(status: "inactive") }
+  scope :in_maintenance, -> { where(status: "maintenance") }
+  scope :by_type, ->(type) { where(vehicle_type: type) }
+  scope :by_node, ->(node_id) { where(organizational_node_id: node_id) }
+  scope :by_name, -> { order(:name) }
+  scope :expiring_registration, ->(days = 30) {
+    where("registration_expires_at BETWEEN ? AND ?", Date.current, days.days.from_now)
+  }
+  scope :expiring_insurance, ->(days = 30) {
+    where("insurance_expires_at BETWEEN ? AND ?", Date.current, days.days.from_now)
+  }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Estado del vehículo
+  def active?
+    status == "active"
+  end
+
+  def in_maintenance?
+    status == "maintenance"
+  end
+
+  # Expiración de documentos
+  def registration_expired?
+    registration_expires_at.present? && registration_expires_at < Date.current
+  end
+
+  def insurance_expired?
+    insurance_expires_at.present? && insurance_expires_at < Date.current
+  end
+
+  def registration_expires_soon?(days = 30)
+    return false unless registration_expires_at.present?
+    registration_expires_at.between?(Date.current, days.days.from_now)
+  end
+
+  def insurance_expires_soon?(days = 30)
+    return false unless insurance_expires_at.present?
+    insurance_expires_at.between?(Date.current, days.days.from_now)
+  end
+
+  # Mantenimiento
+  def requires_maintenance?
+    last_maintenance_date.blank? || last_maintenance_date < 6.months.ago
+  end
+
+  # Acceso
+  def accessible_by?(user)
+    return true if user.platform_admin?
+    return true if user.tenant_admin?(tenant_id)
+
+    user_vehicle_scopes.exists?(user_id: user.id)
+  end
+
+  # Ubicación organizacional
+  def organization_path
+    return "Unassigned" unless organizational_node
+    organizational_node.full_path
+  end
+
+  # Display
+  def display_name
+    "#{name} (#{license_plate})"
+  end
+
+  def to_s
+    display_name
+  end
+
+  private
+
+  def normalize_license_plate
+    self.license_plate = license_plate&.upcase&.strip
+  end
+end
+
+# app/models/user_node_scope.rb
+# Scope de acceso a nodos organizacionales
+
+class UserNodeScope < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+
+  # ============================================
+  # ENUMS
+  # ============================================
+  ACCESS_TYPES = %w[read write admin].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :user
+  belongs_to :organizational_node
+  belongs_to :tenant
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :user_id, presence: true
+  validates :organizational_node_id, presence: true,
+            uniqueness: {
+              scope: [ :user_id, :tenant_id ],
+              conditions: -> { where(deleted_at: nil) }
+            }
+  validates :access_type, inclusion: { in: ACCESS_TYPES }
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :for_user, ->(user_id) { where(user_id: user_id) }
+  scope :for_node, ->(node_id) { where(organizational_node_id: node_id) }
+  scope :read_access, -> { where(access_type: "read") }
+  scope :write_access, -> { where(access_type: "write") }
+  scope :admin_access, -> { where(access_type: "admin") }
+  scope :with_children, -> { where(include_children: true) }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+  def read_only?
+    access_type == "read"
+  end
+
+  def can_write?
+    access_type.in?(%w[write admin])
+  end
+
+  def can_admin?
+    access_type == "admin"
+  end
+
+  # Obtener todos los nodos accesibles (incluyendo hijos si aplica)
+  def accessible_nodes
+    if include_children?
+      organizational_node.descendants.active
+    else
+      OrganizationalNode.where(id: organizational_node_id)
+    end
+  end
+end
+
+# app/models/user_vehicle_scope.rb
+# Scope de acceso a vehículos específicos
+
+class UserVehicleScope < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+
+  # ============================================
+  # ENUMS
+  # ============================================
+  ACCESS_TYPES = %w[read write drive].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :user
+  belongs_to :vehicle
+  belongs_to :tenant
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :user_id, presence: true
+  validates :vehicle_id, presence: true,
+            uniqueness: {
+              scope: [ :user_id, :tenant_id ],
+              conditions: -> { where(deleted_at: nil) }
+            }
+  validates :access_type, inclusion: { in: ACCESS_TYPES }
+  validate :valid_dates
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  before_save :set_default_dates, if: :new_record?
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :for_user, ->(user_id) { where(user_id: user_id) }
+  scope :for_vehicle, ->(vehicle_id) { where(vehicle_id: vehicle_id) }
+  scope :read_access, -> { where(access_type: "read") }
+  scope :write_access, -> { where(access_type: "write") }
+  scope :drive_access, -> { where(access_type: "drive") }
+  scope :active, -> {
+    where("(valid_from IS NULL OR valid_from <= ?) AND (valid_until IS NULL OR valid_until >= ?)",
+          Time.current, Time.current)
+  }
+  scope :expired, -> { where("valid_until < ?", Time.current) }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+  def read_only?
+    access_type == "read"
+  end
+
+  def can_write?
+    access_type.in?(%w[write drive])
+  end
+
+  def can_drive?
+    access_type == "drive"
+  end
+
+  def active?
+    (valid_from.nil? || valid_from <= Time.current) &&
+    (valid_until.nil? || valid_until >= Time.current)
+  end
+
+  def expired?
+    valid_until.present? && valid_until < Time.current
+  end
+
+  private
+
+  def valid_dates
+    return unless valid_from.present? && valid_until.present?
+
+    if valid_from > valid_until
+      errors.add(:valid_until, "must be after valid_from")
+    end
+  end
+
+  def set_default_dates
+    self.valid_from ||= Time.current
   end
 end

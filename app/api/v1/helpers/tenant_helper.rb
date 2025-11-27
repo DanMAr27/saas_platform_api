@@ -16,10 +16,10 @@ module V1
       end
 
       # Forzar que haya un tenant en el contexto
-      # MODIFICADO: Permite a platform admins operar sin tenant
+      # Platform admins no necesitan tenant context
       def require_tenant!
-        # Platform admins no necesitan tenant context
-        return if current_user&.platform_admin?
+        # Platform admins con contexto de plataforma no necesitan tenant
+        return if current_user&.platform_admin? && platform_context?
 
         return if tenant_context?
 
@@ -34,12 +34,12 @@ module V1
       end
 
       # Verificar que el usuario tenga acceso al tenant actual
-      # MODIFICADO: Platform admins siempre tienen acceso
+      # Platform admins siempre tienen acceso
       def verify_tenant_access!
         authenticate! # Primero asegurar que esté autenticado
 
-        # Platform admins tienen acceso a todos los tenants
-        return if current_user.platform_admin?
+        # Platform admins con contexto de plataforma tienen acceso a todo
+        return if current_user.platform_admin? && platform_context?
 
         require_tenant! # Asegurar que haya tenant
 
@@ -58,7 +58,7 @@ module V1
       # Obtener el rol del usuario actual en el tenant actual
       # @return [String, nil]
       def current_user_role
-        return "platform_admin" if current_user&.platform_admin?
+        return "platform_admin" if current_user&.platform_admin? && platform_context?
         return nil unless authenticated? && tenant_context?
 
         current_user.tenant_role(current_tenant.id)
@@ -67,7 +67,7 @@ module V1
       # Verificar si el usuario es admin del tenant actual
       # @return [Boolean]
       def tenant_admin?
-        return true if current_user&.platform_admin?
+        return false if platform_context? # En contexto platform, no aplica tenant_admin
         return false unless authenticated? && tenant_context?
 
         current_user.tenant_admin?(current_tenant.id)
@@ -76,7 +76,7 @@ module V1
       # Verificar si el usuario es manager del tenant actual
       # @return [Boolean]
       def tenant_manager?
-        return true if current_user&.platform_admin?
+        return false if platform_context?
         return false unless authenticated? && tenant_context?
 
         current_user.tenant_manager?(current_tenant.id)
@@ -85,16 +85,28 @@ module V1
       # Verificar si el usuario es driver del tenant actual
       # @return [Boolean]
       def tenant_driver?
-        return false if current_user&.platform_admin?
+        return false if platform_context?
         return false unless authenticated? && tenant_context?
 
         current_user.tenant_driver?(current_tenant.id)
       end
 
       # Forzar que el usuario sea admin del tenant
-      # MODIFICADO: Platform admins siempre pasan
       def require_tenant_admin!
-        return if current_user&.platform_admin?
+        # En contexto platform, verificar platform_admin
+        if platform_context?
+          unless current_user&.platform_admin?
+            error!({
+              success: false,
+              error: {
+                message: "Platform admin role required",
+                status: 403,
+                timestamp: Time.current.iso8601
+              }
+            }, 403)
+          end
+          return
+        end
 
         verify_tenant_access!
 
@@ -111,9 +123,21 @@ module V1
       end
 
       # Forzar que el usuario sea admin o manager del tenant
-      # MODIFICADO: Platform admins siempre pasan
       def require_tenant_admin_or_manager!
-        return if current_user&.platform_admin?
+        # En contexto platform, verificar platform_admin
+        if platform_context?
+          unless current_user&.platform_admin?
+            error!({
+              success: false,
+              error: {
+                message: "Platform admin role required",
+                status: 403,
+                timestamp: Time.current.iso8601
+              }
+            }, 403)
+          end
+          return
+        end
 
         verify_tenant_access!
 
@@ -143,7 +167,7 @@ module V1
         }
       end
 
-      # Establecer tenant manualmente (útil para testing)
+      # Establecer tenant manualmente (útil para platform admins)
       def set_tenant(tenant)
         ActsAsTenant.current_tenant = tenant
       end
@@ -155,19 +179,20 @@ module V1
         end
       end
 
-      # NUEVO: Obtener tenant desde parámetros o contexto
-      # Útil para endpoints que pueden recibir tenant_id en params
+      # Obtener tenant desde parámetros o contexto
+      # Útil para endpoints donde platform admins pueden especificar tenant_id
       def tenant_from_params_or_context
         if params[:tenant_id]
-          Tenant.find(params[:tenant_id])
+          ::Tenant.find(params[:tenant_id])
         else
           current_tenant
         end
       end
 
-      # NUEVO: Validar acceso a un tenant específico
+      # Validar acceso a un tenant específico
       def validate_tenant_access!(tenant)
-        return if current_user.platform_admin?
+        # Platform admins con contexto platform tienen acceso a todo
+        return if current_user.platform_admin? && platform_context?
 
         unless current_user.has_tenant_access?(tenant.id)
           error!({

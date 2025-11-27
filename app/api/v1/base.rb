@@ -10,6 +10,10 @@ module V1
     mount V1::AuthenticationApi
     mount V1::Tenant::ProfileApi
     mount V1::Platform::TenantsApi
+    mount V1::Tenant::VehiclesApi
+    mount V1::Tenant::OrganizationalNodesApi
+    mount V1::Tenant::ScopesApi
+
 
     # Endpoint de health check (siempre disponible, sin autenticación)
     desc "Health check endpoint"
