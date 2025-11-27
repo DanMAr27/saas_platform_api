@@ -12,8 +12,19 @@ Rails.application.configure do
   # Full error reports are disabled.
   config.consider_all_requests_local = false
 
-  # Cache assets for far-future expiry since they are all digest stamped.
-  config.public_file_server.headers = { "cache-control" => "public, max-age=#{1.year.to_i}" }
+  # 🔹 SERVIR ARCHIVOS ESTÁTICOS (necesario para Swagger UI)
+  config.public_file_server.enabled = true
+  config.public_file_server.headers = { "Cache-Control" => "public, max-age=#{1.year.to_i}" }
+
+  # 🔹 ASSETS PIPELINE PARA SWAGGER
+  config.assets.enabled = true
+  config.assets.compile = true
+  config.assets.digest = true
+  config.assets.paths << Rails.root.join("node_modules")
+  config.assets.precompile += %w[
+    grape_swagger_rails/application.css
+    grape_swagger_rails/application.js
+  ]
 
   # Active Storage (archivo local, ajustar si usas S3 u otro servicio)
   config.active_storage.service = :local
@@ -24,7 +35,7 @@ Rails.application.configure do
 
   # Logging
   config.log_tags = [ :request_id ]
-  config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
+  config.logger = ActiveSupport::TaggedLogging.logger(STDOUT)
   config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
   config.silence_healthcheck_path = "/up"
 
@@ -35,7 +46,6 @@ Rails.application.configure do
   config.cache_store = :memory_store
 
   # Active Job: usar inline para producción simple en Render
-  # o puedes cambiar por :async si prefieres background threads
   config.active_job.queue_adapter = :inline
 
   # Mailer defaults
