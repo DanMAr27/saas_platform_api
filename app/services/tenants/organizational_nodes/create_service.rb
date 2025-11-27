@@ -1,6 +1,6 @@
 # app/services/tenant/organizational_nodes/create_service.rb
 
-module Tenant
+module Tenants
   module OrganizationalNodes
     class CreateService
       include ServiceResultHelper

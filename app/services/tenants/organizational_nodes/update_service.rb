@@ -1,6 +1,6 @@
 # app/services/tenant/organizational_nodes/update_service.rb
 
-module Tenant
+module Tenants
   module OrganizationalNodes
     class UpdateService
       include ServiceResultHelper

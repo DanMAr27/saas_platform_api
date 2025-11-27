@@ -1,6 +1,6 @@
 # app/services/tenant/vehicles/create_service.rb
 
-module Tenant
+module Tenants
   module Vehicles
     class CreateService
       include ServiceResultHelper

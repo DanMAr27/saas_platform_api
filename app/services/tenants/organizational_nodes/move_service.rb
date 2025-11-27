@@ -1,6 +1,6 @@
 # app/services/tenant/organizational_nodes/move_service.rb
 
-module Tenant
+module Tenants
   module OrganizationalNodes
     class MoveService
       include ServiceResultHelper

@@ -1,6 +1,6 @@
 # app/services/tenant/vehicles/update_service.rb
 
-module Tenant
+module Tenants
   module Vehicles
     class UpdateService
       include ServiceResultHelper

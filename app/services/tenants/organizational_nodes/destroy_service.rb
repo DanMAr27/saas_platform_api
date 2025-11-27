@@ -1,6 +1,6 @@
 # app/services/tenant/organizational_nodes/destroy_service.rb
 
-module Tenant
+module Tenants
   module OrganizationalNodes
     class DestroyService
       include ServiceResultHelper

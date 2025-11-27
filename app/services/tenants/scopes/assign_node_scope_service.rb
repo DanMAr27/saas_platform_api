@@ -1,6 +1,6 @@
 # app/services/tenant/scopes/assign_node_scope_service.rb
 
-module Tenant
+module Tenants
   module Scopes
     class AssignNodeScopeService
       include ServiceResultHelper

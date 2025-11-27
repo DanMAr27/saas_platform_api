@@ -1,6 +1,6 @@
 # app/services/tenant/scopes/revoke_scope_service.rb
 
-module Tenant
+module Tenants
   module Scopes
     class RevokeScopeService
       include ServiceResultHelper
