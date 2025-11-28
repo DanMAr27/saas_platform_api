@@ -1,6 +1,6 @@
 # app/services/tenant/users/remove_service.rb
 
-module Tenant
+module Tenants
   module Users
     class RemoveService
       include ServiceResultHelper

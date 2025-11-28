@@ -1,6 +1,6 @@
 # app/services/tenant/users/create_service.rb
 
-module Tenant
+module Tenants
   module Users
     class CreateService
       include ServiceResultHelper

@@ -1,6 +1,6 @@
 # app/services/tenant/users/update_scopes_service.rb
 
-module Tenant
+module Tenants
   module Users
     class UpdateScopesService
       include ServiceResultHelper

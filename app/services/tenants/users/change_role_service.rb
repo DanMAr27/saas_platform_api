@@ -1,6 +1,6 @@
 # app/services/tenant/users/change_role_service.rb
 
-module Tenant
+module Tenants
   module Users
     class ChangeRoleService
       include ServiceResultHelper
