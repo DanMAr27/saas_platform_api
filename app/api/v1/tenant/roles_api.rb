@@ -1,5 +1,3 @@
-# frozen_string_literal: true
-
 # app/api/v1/tenant/roles_api.rb
 
 module V1
@@ -191,6 +189,3 @@ module V1
     end
   end
 end
-
-# Agregar mount en app/api/v1/base.rb
-# mount V1::Tenant::RolesApi

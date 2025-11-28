@@ -85,112 +85,32 @@ module V1
   end
 end
 
-# app/api/v1/entities/user_node_scope_entity.rb
+# app/api/v1/entities/role_entity.rb
 
 module V1
   module Entities
-    class UserNodeScopeEntity < Grape::Entity
-      expose :id, documentation: { type: "Integer" }
-      expose :user_id, documentation: { type: "Integer" }
-      expose :organizational_node_id, documentation: { type: "Integer" }
-      expose :access_type, documentation: { type: "String" }
-      expose :include_children, documentation: { type: "Boolean" }
+    # Entity para roles
 
-      expose :user, using: UserEntity, if: ->(scope, opts) { opts[:include_user] }
-      expose :organizational_node, using: OrganizationalNodeEntity,
-             if: ->(scope, opts) { opts[:include_node] }
-
-      with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do
-        expose :created_at, format_with: :iso_timestamp
-        expose :updated_at, format_with: :iso_timestamp
-      end
-    end
-  end
-
-# app/api/v1/entities/user_vehicle_scope_entity.rb
-
-module V1
-  module Entities
-    class UserVehicleScopeEntity < Grape::Entity
-      expose :id, documentation: { type: "Integer" }
-      expose :user_id, documentation: { type: "Integer" }
-      expose :vehicle_id, documentation: { type: "Integer" }
-      expose :access_type, documentation: { type: "String" }
-      expose :valid_from, format_with: :iso_timestamp
-      expose :valid_until, format_with: :iso_timestamp
-
-      expose :active do |scope|
-        scope.active?
-      end
-
-      expose :user, using: UserEntity, if: ->(scope, opts) { opts[:include_user] }
-      expose :vehicle, using: VehicleEntity, if: ->(scope, opts) { opts[:include_vehicle] }
-
-      with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do
-        expose :created_at, format_with: :iso_timestamp
-        expose :updated_at, format_with: :iso_timestamp
-      end
-    end
-  end
-
-# app/api/v1/entities/vehicle_entity.rb
-
-module V1
-  module Entities
-    class VehicleEntity < Grape::Entity
+    class RoleEntity < Grape::Entity
       expose :id, documentation: { type: "Integer" }
       expose :name, documentation: { type: "String" }
-      expose :license_plate, documentation: { type: "String" }
-      expose :fleet_number, documentation: { type: "String" }
-      expose :status, documentation: { type: "String" }
+      expose :slug, documentation: { type: "String" }
+      expose :description, documentation: { type: "String" }
+      expose :context, documentation: { type: "String" }
+      expose :requires_scope, documentation: { type: "Boolean" }
+      expose :is_system, documentation: { type: "Boolean" }
+      expose :priority, documentation: { type: "Integer" }
 
-      # Tipo y marca
-      expose :vehicle_type, documentation: { type: "String" }
-      expose :make, documentation: { type: "String" }
-      expose :model, documentation: { type: "String" }
-      expose :year, documentation: { type: "Integer" }
+      # Settings (si se solicitan)
+      expose :settings, if: ->(role, opts) { opts[:show_settings] }
 
-      # Nodo organizacional
-      expose :organizational_node_id, documentation: { type: "Integer" }
-      expose :organizational_node, using: OrganizationalNodeEntity,
-             if: ->(vehicle, opts) { opts[:include_node] }
-
-      # Detalles
-      with_options(if: ->(vehicle, opts) { opts[:show_details] }) do
-        expose :vin
-        expose :color
-        expose :fuel_type
-        expose :fuel_capacity
-        expose :passenger_capacity
-        expose :odometer
-        expose :purchase_date, format_with: :iso_timestamp
-        expose :registration_expires_at, format_with: :iso_timestamp
-        expose :insurance_expires_at, format_with: :iso_timestamp
-        expose :last_maintenance_date, format_with: :iso_timestamp
-      end
-
-      # Estado de documentos
-      with_options(if: ->(vehicle, opts) { opts[:show_status] }) do
-        expose :registration_expired do |vehicle|
-          vehicle.registration_expired?
-        end
-
-        expose :insurance_expired do |vehicle|
-          vehicle.insurance_expired?
-        end
-
-        expose :requires_maintenance do |vehicle|
-          vehicle.requires_maintenance?
-        end
-      end
-
-      # Ubicación organizacional
-      expose :organization_path, if: ->(vehicle, opts) { opts[:show_organization] } do |vehicle|
-        vehicle.organization_path
+      # Estadísticas de uso (si se solicitan)
+      expose :usage_count, if: ->(role, opts) { opts[:show_usage] } do |role|
+        role.usage_count
       end
 
       # Timestamps
-      with_options(if: ->(vehicle, opts) { opts[:show_timestamps] }) do
+      with_options(if: ->(role, opts) { opts[:show_timestamps] }) do
         expose :created_at, format_with: :iso_timestamp
         expose :updated_at, format_with: :iso_timestamp
       end
@@ -292,47 +212,56 @@ end
 
 module V1
   module Entities
-    # Entity para serializar tenant memberships
+    # Entity para serializar membresías de tenant
 
     class TenantMembershipEntity < Grape::Entity
       # Campos básicos
       expose :id, documentation: { type: "Integer", desc: "Membership ID" }
-      expose :role, documentation: { type: "String", desc: "User role in tenant" }
+      expose :role_id, documentation: { type: "Integer" }
+      expose :role_slug, documentation: { type: "String" } do |membership|
+        membership.role&.slug || membership.role
+      end
+      expose :role_name, documentation: { type: "String" } do |membership|
+        membership.role&.name || membership.role&.titleize
+      end
       expose :status, documentation: { type: "String", desc: "Membership status" }
       expose :is_primary_admin, documentation: { type: "Boolean" }
       expose :is_default, documentation: { type: "Boolean" }
 
-      # Usuario asociado
-      expose :user, using: UserEntity, if: ->(membership, opts) { opts[:include_user] }
+      # Usuario asociado (opcional)
+      expose :user, using: UserEntity,
+             if: ->(membership, opts) { opts[:include_user] }
 
-      # Tenant asociado
-      expose :tenant, using: TenantEntity, if: ->(membership, opts) { opts[:include_tenant] }
+      # Tenant asociado (opcional)
+      expose :tenant, using: TenantEntity,
+             if: ->(membership, opts) { opts[:include_tenant] }
 
       # Solo IDs si no se incluyen entidades completas
       expose :user_id, unless: ->(membership, opts) { opts[:include_user] }
       expose :tenant_id, unless: ->(membership, opts) { opts[:include_tenant] }
 
       # Información de invitación
-      expose :invitation_sent_at,
-              format_with: :iso_timestamp,
-              if: ->(membership, opts) { membership.invited? }
-
-      expose :invitation_accepted_at,
-              format_with: :iso_timestamp,
-              if: ->(membership, opts) { membership.invitation_accepted_at.present? }
-
-      expose :invitation_pending, if: ->(membership, opts) { membership.invited? } do |membership|
+      expose :invitation_pending,
+             if: ->(membership, opts) { membership.invited? } do |membership|
         membership.invitation_pending?
       end
 
+      expose :invitation_sent_at,
+             format_with: :iso_timestamp,
+             if: ->(membership, opts) { membership.invited? }
+
+      expose :invitation_accepted_at,
+             format_with: :iso_timestamp,
+             if: ->(membership, opts) { membership.invitation_accepted_at.present? }
+
       # Timestamps
       expose :created_at,
-              format_with: :iso_timestamp,
-              if: ->(membership, opts) { opts[:show_timestamps] }
+             format_with: :iso_timestamp,
+             if: ->(membership, opts) { opts[:show_timestamps] }
 
       expose :updated_at,
-              format_with: :iso_timestamp,
-              if: ->(membership, opts) { opts[:show_timestamps] }
+             format_with: :iso_timestamp,
+             if: ->(membership, opts) { opts[:show_timestamps] }
     end
   end
 end
@@ -342,11 +271,7 @@ end
 module V1
   module Entities
     # Entity para serializar usuarios
-    # Controla qué campos se exponen en la API
-    #
-    # Uso:
-    #   present user, with: Entities::UserEntity
-    #   present users, with: Entities::UserEntity, type: :summary
+    # Controla qué campos se exponen en la API según el contexto
 
     class UserEntity < Grape::Entity
       # Campos básicos (siempre expuestos)
@@ -370,8 +295,10 @@ module V1
       end
 
       # Timestamps
-      expose :created_at, format_with: :iso_timestamp, if: ->(user, opts) { opts[:show_details] }
-      expose :last_login_at, format_with: :iso_timestamp, if: ->(user, opts) { opts[:show_details] }
+      expose :created_at, format_with: :iso_timestamp,
+             if: ->(user, opts) { opts[:show_details] }
+      expose :last_login_at, format_with: :iso_timestamp,
+             if: ->(user, opts) { opts[:show_details] }
 
       # Contexto y memberships (solo si está disponible)
       expose :context, if: ->(user, opts) { opts[:context].present? } do |user, opts|
@@ -382,13 +309,7 @@ module V1
         opts[:tenant_id]
       end
 
-      # Roles (se implementará en Fase 3)
-      # expose :roles, if: ->(user, opts) { opts[:show_roles] } do |user, opts|
-      #   user.roles_for_context(opts[:context], opts[:tenant_id])
-      # end
-
       # Resumen (para listas)
-      # Uso: present users, with: UserEntity, type: :summary
       with_options(if: ->(user, opts) { opts[:type] == :summary }) do
         expose :id
         expose :email
@@ -397,7 +318,6 @@ module V1
       end
 
       # Detalles completos
-      # Uso: present user, with: UserEntity, type: :detailed
       with_options(if: ->(user, opts) { opts[:type] == :detailed }) do
         expose :phone
         expose :avatar_url
@@ -412,452 +332,257 @@ module V1
   end
 end
 
-# app/api/helpers/application_helper.rb
-# Helper base con métodos comunes
-
-module API
-  module Helpers
-    module ApplicationHelper
-      # NOTA: error_response y success_response ahora están definidos en BaseApi
-      # para mantener consistencia en toda la API
-
-      # Parsea parámetros de paginación
-      def pagination_params
-        {
-          page: params[:page] || 1,
-          per_page: params[:per_page] || 25
-        }
-      end
-
-      # Metadata de paginación para respuestas
-      def pagination_meta(collection)
-        {
-          current_page: collection.current_page,
-          total_pages: collection.total_pages,
-          total_count: collection.total_count,
-          per_page: collection.limit_value
-        }
-      end
-
-      # Método auxiliar para extraer información del request
-      def request_info
-        {
-          ip: request.ip,
-          user_agent: request.user_agent,
-          path: request.path,
-          method: request.request_method
-        }
-      end
-    end
-  end
-end
-
-# frozen_string_literal: true
+# app/api/v1/entities/user_node_scope_entity.rb
 
 module V1
-  module Helpers
-    # Helper para autenticación en Grape API
-    # Proporciona métodos para autenticar requests y obtener el usuario actual
-    #
-    # Uso en endpoints:
-    #   helpers AuthenticationHelper
-    #
-    #   get :profile do
-    #     authenticate!
-    #     current_user.to_json
-    #   end
+  module Entities
+    # Entity para scopes de nodos organizacionales
 
-    module AuthenticationHelper
-      # Obtener el usuario actual del token JWT
-      # @return [User, nil]
-      def current_user
-        return @current_user if defined?(@current_user)
+    class UserNodeScopeEntity < Grape::Entity
+      expose :id, documentation: { type: "Integer" }
+      expose :user_id, documentation: { type: "Integer" }
+      expose :organizational_node_id, documentation: { type: "Integer" }
+      expose :access_type, documentation: { type: "String" }
+      expose :include_children, documentation: { type: "Boolean" }
 
-        token = extract_token
-        return nil unless token
-
-        result = Authentication::JwtDecoder.decode(token)
-
-        if result.success?
-          @current_user = result.meta[:user]
-          @current_payload = result.data
-        else
-          @current_user = nil
-          @current_payload = nil
-        end
-
-        @current_user
-      end
-
-      # Obtener el payload del token JWT actual
-      # @return [Hash, nil]
-      def current_payload
-        current_user # Esto inicializa @current_payload
-        @current_payload
-      end
-
-      # Verificar si hay un usuario autenticado
-      # @return [Boolean]
-      def authenticated?
-        current_user.present?
-      end
-
-      # Forzar autenticación (lanzar error si no está autenticado)
-      # Usar en endpoints que requieren autenticación
-      def authenticate!
-        return if authenticated?
-
-        error!({
-          success: false,
-          error: {
-            message: "Authentication required",
-            status: 401,
-            timestamp: Time.current.iso8601
-          }
-        }, 401)
-      end
-
-      # Obtener el contexto del usuario actual (platform o tenant)
-      # @return [String, nil]
-      def current_context
-        current_payload&.dig(:context)
-      end
-
-      # Obtener el tenant_id del contexto actual
-      # @return [Integer, nil]
-      def current_tenant_id
-        current_payload&.dig(:tenant_id)
-      end
-
-      # Verificar si el usuario tiene contexto de plataforma
-      # @return [Boolean]
-      def platform_context?
-        current_context == "platform"
-      end
-
-      # Verificar si el usuario tiene contexto de tenant
-      # @return [Boolean]
-      def tenant_context?
-        current_context == "tenant"
-      end
-
-      # Información del request para auditoría
-      # @return [Hash]
-      def request_info
+      # Información del nodo (si se solicita)
+      expose :organizational_node,
+             if: ->(scope, opts) { opts[:include_node] } do |scope|
         {
-          ip: request.ip,
-          user_agent: request.user_agent,
-          method: request.request_method,
-          path: request.path,
-          referer: request.referer
+          id: scope.organizational_node.id,
+          name: scope.organizational_node.name,
+          code: scope.organizational_node.code,
+          level_name: scope.organizational_node.level.name,
+          full_path: scope.organizational_node.full_path
         }
       end
 
-      # Obtener ID del request para tracking
-      # @return [String]
-      def request_id
-        request.env["action_dispatch.request_id"] || SecureRandom.uuid
+      # Nodos accesibles (calculado)
+      expose :accessible_nodes_count,
+             if: ->(scope, opts) { opts[:show_accessible_count] } do |scope|
+        scope.accessible_nodes.count
       end
 
-      private
+      # Usuario (opcional)
+      expose :user, using: UserEntity,
+             if: ->(scope, opts) { opts[:include_user] }
 
-      # Extraer token del header Authorization
-      # Formato esperado: "Bearer {token}"
-      # @return [String, nil]
-      def extract_token
-        auth_header = headers["Authorization"] || headers["authorization"]
-        return nil unless auth_header
-
-        # Formato: "Bearer {token}"
-        match = auth_header.match(/^Bearer\s+(.+)$/i)
-        match ? match[1] : nil
+      # Timestamps
+      with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do
+        expose :created_at, format_with: :iso_timestamp
+        expose :updated_at, format_with: :iso_timestamp
       end
     end
   end
 end
 
-# frozen_string_literal: true
+# app/api/v1/entities/user_vehicle_scope_entity.rb
 
 module V1
-  module Helpers
-    # Helper para autorización con Pundit en Grape API
+  module Entities
+    # Entity para scopes de vehículos
 
-    module AuthorizationHelper
-      # Incluir Pundit en el helper
-      include Pundit::Authorization
+    class UserVehicleScopeEntity < Grape::Entity
+      expose :id, documentation: { type: "Integer" }
+      expose :user_id, documentation: { type: "Integer" }
+      expose :vehicle_id, documentation: { type: "Integer" }
+      expose :access_type, documentation: { type: "String" }
+      expose :valid_from, format_with: :iso_timestamp
+      expose :valid_until, format_with: :iso_timestamp
 
-      # Usuario actual para Pundit (requerido por Pundit)
-      def pundit_user
-        current_user
+      # Estado del scope
+      expose :active do |scope|
+        scope.active?
       end
 
-      # Autorizar acción con Pundit
-      # @param record [Object] Registro a autorizar
-      # @param query [Symbol] Acción a autorizar (ej: :show?, :create?)
-      def authorize!(record, query = nil)
-        # Si no hay query, inferir desde el método HTTP
-        query ||= infer_policy_query
-
-        # Obtener la política
-        policy = policy(record)
-
-        # Verificar autorización
-        unless policy.public_send(query)
-          error!({
-            success: false,
-            error: {
-              message: "You are not authorized to perform this action",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-
-        true
+      expose :expired do |scope|
+        scope.expired?
       end
 
-      # Autorizar scope (para index/list)
-      # @param scope [ActiveRecord::Relation]
-      def policy_scope(scope)
-        Pundit.policy_scope!(pundit_user, scope)
-      end
-
-      # Obtener política para un registro
-      # @param record [Object]
-      # @return [Policy]
-      def policy(record)
-        Pundit.policy!(pundit_user, record)
-      end
-
-      # Verificar si está autorizado sin lanzar error
-      # @param record [Object]
-      # @param query [Symbol]
-      # @return [Boolean]
-      def authorized?(record, query = nil)
-        query ||= infer_policy_query
-        policy(record).public_send(query)
-      rescue Pundit::NotAuthorizedError
-        false
-      end
-
-      # Helpers específicos de roles
-
-      def require_super_admin!
-        authenticate!
-
-        unless current_user.super_admin?
-          error!({
-            success: false,
-            error: {
-              message: "Super Admin role required",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-      end
-
-      def require_platform_admin!
-        authenticate!
-
-        unless current_user.platform_admin?
-          error!({
-            success: false,
-            error: {
-              message: "Platform Admin role required",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-      end
-
-      def require_support_admin!
-        authenticate!
-
-        unless current_user.support_admin?
-          error!({
-            success: false,
-            error: {
-              message: "Support Admin role required",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-      end
-
-      private
-
-      # Inferir query de política desde método HTTP
-      def infer_policy_query
-        case request.request_method
-        when "GET"
-          # Si es lista (sin ID en params) usar index?, sino show?
-          params[:id].present? ? :show? : :index?
-        when "POST"
-          :create?
-        when "PUT", "PATCH"
-          :update?
-        when "DELETE"
-          :destroy?
-        else
-          :show? # Por defecto
-        end
-      end
-    end
-  end
-end
-
-# frozen_string_literal: true
-
-module V1
-  module Helpers
-    # Helper para operaciones relacionadas con tenants en Grape API
-    # Proporciona métodos para acceder al tenant actual y validar permisos
-
-    module TenantHelper
-      # Obtener el tenant actual del contexto
-      # @return [Tenant, nil]
-      def current_tenant
-        ActsAsTenant.current_tenant
-      end
-
-      # Verificar si hay un tenant en el contexto
-      # @return [Boolean]
-      def tenant_context?
-        current_tenant.present?
-      end
-
-      # Forzar que haya un tenant en el contexto
-      def require_tenant!
-        return if tenant_context?
-
-        error!({
-          success: false,
-          error: {
-            message: "Tenant context is required",
-            status: 400,
-            timestamp: Time.current.iso8601
-          }
-        }, 400)
-      end
-
-      # Verificar que el usuario tenga acceso al tenant actual
-      def verify_tenant_access!
-        authenticate! # Primero asegurar que esté autenticado
-        require_tenant! # Asegurar que haya tenant
-
-        unless current_user.has_tenant_access?(current_tenant.id)
-          error!({
-            success: false,
-            error: {
-              message: "Access denied to this tenant",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-      end
-
-      # Obtener el rol del usuario actual en el tenant actual
-      # @return [String, nil]
-      def current_user_role
-        return nil unless authenticated? && tenant_context?
-
-        current_user.tenant_role(current_tenant.id)
-      end
-
-      # Verificar si el usuario es admin del tenant actual
-      # @return [Boolean]
-      def tenant_admin?
-        return false unless authenticated? && tenant_context?
-
-        current_user.tenant_admin?(current_tenant.id)
-      end
-
-      # Verificar si el usuario es manager del tenant actual
-      # @return [Boolean]
-      def tenant_manager?
-        return false unless authenticated? && tenant_context?
-
-        current_user.tenant_manager?(current_tenant.id)
-      end
-
-      # Verificar si el usuario es driver del tenant actual
-      # @return [Boolean]
-      def tenant_driver?
-        return false unless authenticated? && tenant_context?
-
-        current_user.tenant_driver?(current_tenant.id)
-      end
-
-      # Forzar que el usuario sea admin del tenant
-      def require_tenant_admin!
-        verify_tenant_access!
-
-        unless tenant_admin?
-          error!({
-            success: false,
-            error: {
-              message: "Admin role required",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-      end
-
-      # Forzar que el usuario sea admin o manager del tenant
-      def require_tenant_admin_or_manager!
-        verify_tenant_access!
-
-        unless tenant_admin? || tenant_manager?
-          error!({
-            success: false,
-            error: {
-              message: "Admin or Manager role required",
-              status: 403,
-              timestamp: Time.current.iso8601
-            }
-          }, 403)
-        end
-      end
-
-      # Información del tenant actual para respuestas
-      # @return [Hash]
-      def current_tenant_info
-        return nil unless tenant_context?
-
+      # Información del vehículo (si se solicita)
+      expose :vehicle,
+             if: ->(scope, opts) { opts[:include_vehicle] } do |scope|
         {
-          id: current_tenant.id,
-          name: current_tenant.name,
-          slug: current_tenant.slug,
-          status: current_tenant.status,
-          plan: current_tenant.plan
+          id: scope.vehicle.id,
+          name: scope.vehicle.name,
+          license_plate: scope.vehicle.license_plate,
+          fleet_number: scope.vehicle.fleet_number,
+          vehicle_type: scope.vehicle.vehicle_type,
+          status: scope.vehicle.status
         }
       end
 
-      # Establecer tenant manualmente (útil para testing)
-      def set_tenant(tenant)
-        ActsAsTenant.current_tenant = tenant
+      # Usuario (opcional)
+      expose :user, using: UserEntity,
+             if: ->(scope, opts) { opts[:include_user] }
+
+      # Timestamps
+      with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do
+        expose :created_at, format_with: :iso_timestamp
+        expose :updated_at, format_with: :iso_timestamp
+      end
+    end
+  end
+end
+# app/api/v1/entities/user_with_membership_entity.rb
+
+module V1
+  module Entities
+    # Entity compuesta para usuario con su membresía en un tenant
+    # Incluye datos del usuario, rol y scopes
+
+    class UserWithMembershipEntity < Grape::Entity
+      # Datos del usuario
+      expose :id, documentation: { type: "Integer" }
+      expose :email, documentation: { type: "String" }
+      expose :first_name, documentation: { type: "String" }
+      expose :last_name, documentation: { type: "String" }
+      expose :full_name, documentation: { type: "String" }
+      expose :phone, documentation: { type: "String" }
+      expose :avatar_url, documentation: { type: "String" }
+
+      # Estado del usuario
+      expose :email_verified do |user|
+        user.email_verified?
       end
 
-      # Ejecutar bloque sin tenant context
-      def without_tenant
-        ActsAsTenant.without_tenant do
-          yield
-        end
+      expose :active do |user|
+        user.active?
+      end
+
+      # Información de la membresía
+      expose :membership, using: TenantMembershipEntity,
+             if: ->(user, opts) { opts[:membership].present? } do |user, opts|
+        opts[:membership]
+      end
+
+      # Scopes (si se solicitan)
+      expose :scopes, if: ->(user, opts) { opts[:include_scopes] } do |user, opts|
+        tenant_id = opts[:tenant_id] || opts[:membership]&.tenant_id
+
+        {
+          nodes: user.user_node_scopes
+                    .where(tenant_id: tenant_id)
+                    .kept
+                    .includes(:organizational_node)
+                    .map { |scope|
+                      UserNodeScopeEntity.represent(
+                        scope,
+                        include_node: true,
+                        show_timestamps: false
+                      )
+                    },
+
+          vehicles: user.user_vehicle_scopes
+                       .where(tenant_id: tenant_id)
+                       .kept
+                       .includes(:vehicle)
+                       .map { |scope|
+                         UserVehicleScopeEntity.represent(
+                           scope,
+                           include_vehicle: true,
+                           show_timestamps: false
+                         )
+                       }
+        }
+      end
+
+      # Timestamps (si se solicitan)
+      with_options(if: ->(user, opts) { opts[:show_timestamps] }) do
+        expose :created_at, format_with: :iso_timestamp
+        expose :last_login_at, format_with: :iso_timestamp
+      end
+
+      # Estadísticas (si se solicitan)
+      expose :stats, if: ->(user, opts) { opts[:show_stats] } do |user, opts|
+        tenant_id = opts[:tenant_id] || opts[:membership]&.tenant_id
+
+        {
+          node_scopes_count: user.user_node_scopes
+                                .where(tenant_id: tenant_id)
+                                .kept
+                                .count,
+          vehicle_scopes_count: user.user_vehicle_scopes
+                                   .where(tenant_id: tenant_id)
+                                   .kept
+                                   .count,
+          sign_in_count: user.sign_in_count
+        }
       end
     end
   end
 end
 
-# app/api/platform/tenants_api.rb
+# app/api/v1/entities/vehicle_entity.rb
+
+module V1
+  module Entities
+    class VehicleEntity < Grape::Entity
+      expose :id, documentation: { type: "Integer" }
+      expose :name, documentation: { type: "String" }
+      expose :license_plate, documentation: { type: "String" }
+      expose :fleet_number, documentation: { type: "String" }
+      expose :status, documentation: { type: "String" }
+
+      # Tipo y marca
+      expose :vehicle_type, documentation: { type: "String" }
+      expose :make, documentation: { type: "String" }
+      expose :model, documentation: { type: "String" }
+      expose :year, documentation: { type: "Integer" }
+
+      # Nodo organizacional
+      expose :organizational_node_id, documentation: { type: "Integer" }
+      expose :organizational_node, using: OrganizationalNodeEntity,
+             if: ->(vehicle, opts) { opts[:include_node] }
+
+      # Detalles
+      with_options(if: ->(vehicle, opts) { opts[:show_details] }) do
+        expose :vin
+        expose :color
+        expose :fuel_type
+        expose :fuel_capacity
+        expose :passenger_capacity
+        expose :odometer
+        expose :purchase_date, format_with: :iso_timestamp
+        expose :registration_expires_at, format_with: :iso_timestamp
+        expose :insurance_expires_at, format_with: :iso_timestamp
+        expose :last_maintenance_date, format_with: :iso_timestamp
+      end
+
+      # Estado de documentos
+      with_options(if: ->(vehicle, opts) { opts[:show_status] }) do
+        expose :registration_expired do |vehicle|
+          vehicle.registration_expired?
+        end
+
+        expose :insurance_expired do |vehicle|
+          vehicle.insurance_expired?
+        end
+
+        expose :requires_maintenance do |vehicle|
+          vehicle.requires_maintenance?
+        end
+      end
+
+      # Ubicación organizacional
+      expose :organization_path, if: ->(vehicle, opts) { opts[:show_organization] } do |vehicle|
+        vehicle.organization_path
+      end
+
+      # Timestamps
+      with_options(if: ->(vehicle, opts) { opts[:show_timestamps] }) do
+        expose :created_at, format_with: :iso_timestamp
+        expose :updated_at, format_with: :iso_timestamp
+      end
+    end
+  end
+end
+
+==============  API =====================
+# app/api/v1/platform/tenants_api.rb
 
 module V1
   module Platform
-    # API para gestión de tenants por SuperAdmin
     class TenantsApi < Grape::API
       helpers Helpers::AuthenticationHelper
       helpers Helpers::AuthorizationHelper
@@ -868,24 +593,22 @@ module V1
           # LISTAR TENANTS
           # ============================================
           desc "List all tenants (SuperAdmin only)",
-                tags: [ "Platform - Tenants" ],
-                success: { code: 200 },
-                failure: [
-                  { code: 401, message: "Authentication required" },
-                  { code: 403, message: "Super Admin role required" }
-                ]
+                tags: [ "Platform - Tenants" ]
           params do
-            optional :status, type: String, values: Tenant::STATUSES
-            optional :plan, type: String, values: Tenant::PLANS
-            optional :search, type: String, desc: "Search by name, slug, or domain"
+            optional :status, type: String, values: ::Tenant::STATUSES
+            optional :plan, type: String, values: ::Tenant::PLANS
+            optional :search, type: String
             optional :page, type: Integer, default: 1
             optional :per_page, type: Integer, default: 25, values: 1..100
           end
           get do
             require_super_admin!
 
-            # Obtener todos los tenants (sin scope de tenant)
-            tenants = policy_scope(Tenant)
+            # Usar policy_scope para obtener tenants permitidos
+            tenants = policy_scope(
+              Tenant,
+              policy_scope_class: TenantPolicy::Scope
+            )
 
             # Filtros
             tenants = tenants.where(status: params[:status]) if params[:status]
@@ -914,31 +637,35 @@ module V1
           desc "Get tenant details (SuperAdmin only)",
                 tags: [ "Platform - Tenants" ]
           params do
-            requires :id, type: Integer, desc: "Tenant ID"
+            requires :id, type: Integer
           end
           get ":id" do
             require_super_admin!
 
-            tenant = Tenant.find(params[:id])
-            authorize!(tenant, :show?)
+            tenant = ::Tenant.find(params[:id])
+            authorize!(tenant, :show?, policy_class: TenantPolicy)
 
-            present tenant, with: Entities::TenantEntity, type: :detailed
+            present tenant,
+                    with: Entities::TenantEntity,
+                    type: :detailed,
+                    show_limits: true,
+                    show_subscription: true,
+                    show_timestamps: true
           end
 
           # ============================================
           # CREAR TENANT
           # ============================================
           desc "Create new tenant (SuperAdmin only)",
-                tags: [ "Platform - Tenants" ],
-                success: { code: 201 }
+                tags: [ "Platform - Tenants" ]
           params do
             requires :name, type: String
             optional :slug, type: String
             optional :domain, type: String
             optional :legal_name, type: String
             optional :tax_id, type: String
-            optional :plan, type: String, values: Tenant::PLANS, default: "trial"
-            optional :status, type: String, values: Tenant::STATUSES, default: "trial"
+            optional :plan, type: String, values: ::Tenant::PLANS, default: "trial"
+            optional :status, type: String, values: ::Tenant::STATUSES, default: "trial"
             requires :admin_email, type: String
             requires :admin_first_name, type: String
             requires :admin_last_name, type: String
@@ -948,7 +675,11 @@ module V1
           post do
             require_super_admin!
 
-            result = Tenant::Tenants::CreateService.call(
+            # Autorizar con un tenant temporal
+            temp_tenant = ::Tenant.new
+            authorize!(temp_tenant, :create?, policy_class: TenantPolicy)
+
+            result = ::Platform::Tenants::CreateService.call(
               params: declared(params),
               current_user: current_user
             )
@@ -966,9 +697,42 @@ module V1
                 message: result.message
               )
             else
-              error_response(
+              api_error(
                 message: result.message,
                 errors: result.errors,
+                status: 422
+              )
+            end
+          end
+
+          # ============================================
+          # ACTUALIZAR TENANT
+          # ============================================
+          desc "Update tenant (SuperAdmin only)",
+                tags: [ "Platform - Tenants" ]
+          params do
+            requires :id, type: Integer
+            optional :name, type: String
+            optional :domain, type: String
+            optional :legal_name, type: String
+            optional :plan, type: String, values: ::Tenant::PLANS
+            optional :max_users, type: Integer
+          end
+          patch ":id" do
+            require_super_admin!
+
+            tenant = ::Tenant.find(params[:id])
+            authorize!(tenant, :update?, policy_class: TenantPolicy)
+
+            if tenant.update(declared(params, include_missing: false).except(:id))
+              success_response(
+                data: Entities::TenantEntity.represent(tenant, type: :detailed),
+                message: "Tenant updated successfully"
+              )
+            else
+              api_error(
+                message: "Failed to update tenant",
+                errors: tenant.errors.full_messages,
                 status: 422
               )
             end
@@ -985,8 +749,8 @@ module V1
           post ":id/activate" do
             require_super_admin!
 
-            tenant = Tenant.find(params[:id])
-            authorize!(tenant, :activate?)
+            tenant = ::Tenant.find(params[:id])
+            authorize!(tenant, :activate?, policy_class: TenantPolicy)
 
             tenant.activate!
 
@@ -1008,8 +772,8 @@ module V1
           post ":id/suspend" do
             require_super_admin!
 
-            tenant = Tenant.find(params[:id])
-            authorize!(tenant, :suspend?)
+            tenant = ::Tenant.find(params[:id])
+            authorize!(tenant, :suspend?, policy_class: TenantPolicy)
 
             tenant.suspend!(reason: params[:reason])
 
@@ -1044,586 +808,6 @@ module V1
           end
         end
       end
-    end
-  end
-end
-
-# app/api/tenant/profile_api.rb
-
-module V1
-  module Tenant
-    # API para información del tenant actual y perfil del usuario en el tenant
-    class ProfileApi < Grape::API
-      helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
-      helpers Helpers::AuthorizationHelper
-
-      namespace :tenant do
-        # ============================================
-        # INFORMACIÓN DEL TENANT ACTUAL
-        # ============================================
-        desc "Get current tenant information",
-              tags: [ "Tenant" ],
-              success: { code: 200 },
-              failure: [
-                { code: 401, message: "Authentication required" },
-                { code: 400, message: "Tenant context required" }
-              ]
-        get :profile do
-          authenticate!
-          require_tenant!
-          verify_tenant_access!
-          authorize!(current_tenant, :show?)
-
-          present current_tenant,
-                  with: Entities::TenantEntity,
-                  type: :detailed,
-                  show_limits: true,
-                  show_subscription: true,
-                  show_timestamps: true
-        end
-
-        # ============================================
-        # MEMBRESÍA DEL USUARIO ACTUAL
-        # ============================================
-        desc "Get current user membership in tenant",
-              tags: [ "Tenant" ],
-              success: { code: 200 },
-              failure: [
-                { code: 401, message: "Authentication required" }
-              ]
-        get :my_membership do
-          authenticate!
-          require_tenant!
-
-          membership = current_user.tenant_memberships
-                                  .find_by(tenant_id: current_tenant.id, status: "active")
-
-          unless membership
-            error_response(
-              message: "Membership not found",
-              status: 404
-            )
-          end
-
-          present membership,
-                  with: Entities::TenantMembershipEntity,
-                  include_tenant: false,
-                  include_user: false,
-                  show_timestamps: true
-        end
-
-        # ============================================
-        # USUARIOS DEL TENANT
-        # ============================================
-        desc "List users in current tenant",
-              tags: [ "Tenant" ],
-              success: { code: 200 },
-              failure: [
-                { code: 401, message: "Authentication required" },
-                { code: 403, message: "Permission denied" }
-              ]
-        params do
-          optional :status, type: String, values: TenantMembership::STATUSES
-          optional :role_slug, type: String, values: -> { TenantMembership.available_role_slugs }
-          optional :page, type: Integer, default: 1
-          optional :per_page, type: Integer, default: 25, values: 1..100
-        end
-        get :users do
-          authenticate!
-          require_tenant!
-          require_tenant_admin_or_manager!
-
-          # Obtener membresías del tenant
-          memberships = current_tenant.tenant_memberships.kept.includes(:role, :user)
-
-          # Filtros
-          memberships = memberships.where(status: params[:status]) if params[:status]
-
-          # Filtrar por role_slug si se proporciona
-          if params[:role_slug]
-            role = Role.tenant_roles.find_by(slug: params[:role_slug])
-            memberships = memberships.where(role_id: role.id) if role
-          end
-
-          # Paginación
-          memberships = memberships.page(params[:page]).per(params[:per_page])
-
-          # Retornar con metadata de paginación
-          success_response(
-            data: memberships.map { |m|
-              Entities::TenantMembershipEntity.represent(
-                m,
-                include_user: true,
-                include_tenant: false
-              )
-            },
-            meta: {
-              current_page: memberships.current_page,
-              total_pages: memberships.total_pages,
-              total_count: memberships.total_count,
-              per_page: params[:per_page]
-            }
-          )
-        end
-
-        # ============================================
-        # INVITAR USUARIO
-        # ============================================
-        desc "Invite user to tenant",
-              tags: [ "Tenant" ],
-              success: { code: 201 },
-              failure: [
-                { code: 401, message: "Authentication required" },
-                { code: 403, message: "Permission denied" },
-                { code: 422, message: "Validation error" }
-              ]
-        params do
-          requires :email, type: String, desc: "User email"
-          requires :first_name, type: String, desc: "First name"
-          requires :last_name, type: String, desc: "Last name"
-          requires :role_slug, type: String, values: -> { TenantMembership.available_role_slugs }, desc: "Role slug (e.g., tenant_admin, tenant_manager, tenant_driver)"
-          optional :phone, type: String, desc: "Phone number"
-        end
-        post :invite do
-          authenticate!
-          require_tenant!
-          require_tenant_admin_or_manager!
-
-          result = Platform::Tenants::InviteService.call(
-            tenant: current_tenant,
-            params: declared(params),
-            invited_by: current_user
-          )
-
-          if result.success?
-            status 201
-            success_response(
-              data: {
-                user: Entities::UserEntity.represent(result.data[:user]),
-                membership: Entities::TenantMembershipEntity.represent(
-                  result.data[:membership],
-                  include_user: false,
-                  include_tenant: false
-                ),
-                invitation_token: result.data[:invitation_token]
-              },
-              message: result.message
-            )
-          else
-            error_response(
-              message: result.message,
-              errors: result.errors,
-              status: 422
-            )
-          end
-        end
-
-        # ============================================
-        # ESTADÍSTICAS DEL TENANT
-        # ============================================
-        desc "Get tenant statistics",
-              tags: [ "Tenant" ],
-              success: { code: 200 },
-              failure: [
-                { code: 401, message: "Authentication required" },
-                { code: 403, message: "Permission denied" }
-              ]
-        get :stats do
-          authenticate!
-          require_tenant!
-          require_tenant_admin!
-
-          stats = {
-            users: {
-              total: current_tenant.tenant_memberships.count,
-              active: current_tenant.active_memberships.count,
-              invited: current_tenant.tenant_memberships.invited.count,
-              suspended: current_tenant.tenant_memberships.suspended.count
-            },
-            roles: {
-              admins: current_tenant.tenant_memberships.with_role_slug("tenant_admin").count,
-              managers: current_tenant.tenant_memberships.with_role_slug("tenant_manager").count,
-              drivers: current_tenant.tenant_memberships.with_role_slug("tenant_driver").count
-            },
-            limits: {
-              max_users: current_tenant.max_users,
-              current_users: current_tenant.active_users.count,
-              remaining_slots: current_tenant.remaining_user_slots,
-              limit_reached: current_tenant.user_limit_reached?
-            },
-            subscription: {
-              status: current_tenant.status,
-              plan: current_tenant.plan,
-              trial_days_remaining: current_tenant.trial? ? current_tenant.trial_days_remaining : nil
-            }
-          }
-
-          success_response(data: stats)
-        end
-      end
-    end
-  end
-end
-
-# app/api/authentication_api.rb
-
-module V1
-  # API de Autenticación
-  # Maneja login, logout, refresh de tokens y validación
-  class AuthenticationApi < Grape::API
-    helpers Helpers::AuthenticationHelper
-
-    resource :auth do
-      # ============================================
-      # LOGIN - PASO 1: VALIDAR CREDENCIALES
-      # ============================================
-      desc "User login - Step 1: Validate credentials",
-            tags: [ "Authentication" ],
-            success: { code: 200, message: "Credentials validated" },
-            failure: [
-              { code: 401, message: "Invalid credentials" },
-              { code: 422, message: "Validation error" }
-            ],
-            detail: "Validates credentials and returns available contexts. If user has multiple contexts, requires Step 2."
-      params do
-        requires :email,
-                  type: String,
-                  desc: "User email",
-                  documentation: { example: "user@example.com" }
-        requires :password,
-                  type: String,
-                  desc: "User password",
-                  documentation: { example: "password123" }
-      end
-      post :login do
-        result = Authentication::LoginStep1Service.call(
-          email: params[:email],
-          password: params[:password],
-          request_info: request_info
-        )
-
-        if result.success?
-          status 200
-          success_response(
-            data: result.data,
-            message: result.message
-          )
-        else
-          api_error(
-            message: result.message || "Authentication failed",
-            status: 401,
-            errors: result.errors
-          )
-        end
-      end
-
-      # ============================================
-      # LOGIN - PASO 2: SELECCIONAR CONTEXTO
-      # ============================================
-      desc "User login - Step 2: Select context",
-            tags: [ "Authentication" ],
-            success: { code: 200, message: "Login successful" },
-            failure: [
-              { code: 401, message: "Invalid session token" },
-              { code: 422, message: "Invalid context" }
-            ],
-            detail: "Selects a specific context and returns JWT token"
-      params do
-        requires :session_token,
-                  type: String,
-                  desc: "Session token from Step 1"
-        requires :context_type,
-                  type: String,
-                  values: [ "platform", "tenant" ],
-                  desc: "Type of context to access"
-        optional :tenant_id,
-                  type: Integer,
-                  desc: "Tenant ID (required if context_type is tenant)"
-      end
-      post "login/select-context" do
-        result = Authentication::LoginStep2Service.call(
-          session_token: params[:session_token],
-          context_type: params[:context_type],
-          tenant_id: params[:tenant_id]
-        )
-
-        if result.success?
-          status 200
-          success_response(
-            data: result.data,
-            message: result.message
-          )
-        else
-          api_error(
-            message: result.message || "Context selection failed",
-            status: 401,
-            errors: result.errors
-          )
-        end
-      end
-
-      # ============================================
-      # LOGIN - ACCESO DIRECTO (LEGACY/SIMPLIFICADO)
-      # ============================================
-      desc "Direct login with context (simplified)",
-            tags: [ "Authentication" ],
-            success: { code: 200 },
-            failure: [ { code: 401, message: "Invalid credentials" } ],
-            detail: "Legacy endpoint: login directly with tenant_id. Use two-step flow for better UX."
-      params do
-        requires :email, type: String
-        requires :password, type: String
-        optional :tenant_id, type: Integer, desc: "Tenant ID for direct access"
-      end
-      post "login/direct" do
-        # Paso 1: Validar credenciales
-        step1_result = Authentication::LoginStep1Service.call(
-          email: params[:email],
-          password: params[:password],
-          request_info: request_info
-        )
-
-        if step1_result.failure?
-          api_error(
-            message: step1_result.message || "Authentication failed",
-            status: 401,
-            errors: step1_result.errors
-          )
-        end
-
-        # Determinar contexto automáticamente
-        contexts = step1_result.data[:contexts]
-        default_context = step1_result.data[:default_context]
-
-        # Si tiene tenant_id, buscar ese contexto
-        if params[:tenant_id]
-          selected = contexts.find { |c| c[:type] == "tenant" && c[:tenant_id] == params[:tenant_id] }
-          unless selected
-            api_error(
-              message: "Invalid tenant_id or no access",
-              status: 403
-            )
-          end
-        else
-          # Usar contexto por defecto
-          selected = default_context
-          unless selected
-            api_error(
-              message: "Multiple contexts available. Use two-step login.",
-              status: 400,
-              errors: [ "Please use POST /auth/login and POST /auth/login/select-context" ]
-            )
-          end
-        end
-
-        # Paso 2: Generar token
-        step2_result = Authentication::LoginStep2Service.call(
-          session_token: step1_result.data[:session_token],
-          context_type: selected[:type],
-          tenant_id: selected[:tenant_id]
-        )
-
-        if step2_result.success?
-          status 200
-          success_response(
-            data: step2_result.data,
-            message: "Login successful"
-          )
-        else
-          api_error(
-            message: step2_result.message || "Token generation failed",
-            status: 401,
-            errors: step2_result.errors
-          )
-        end
-      end
-
-      # ============================================
-      # LOGOUT
-      # ============================================
-      desc "User logout",
-            tags: [ "Authentication" ],
-            success: { code: 200, message: "Logout successful" },
-            failure: [
-              { code: 401, message: "Authentication required" }
-            ],
-            headers: {
-              "Authorization" => {
-                description: "Bearer token",
-                required: true
-              }
-            }
-      delete :logout do
-        authenticate!
-
-        token = extract_token
-
-        result = Authentication::LogoutService.call(
-          token: token,
-          user: current_user
-        )
-
-        if result.success?
-          status 200
-          success_response(
-            data: result.data,
-            message: result.message
-          )
-        else
-          api_error(
-            message: result.message || "Logout failed",
-            status: 400,
-            errors: result.errors
-          )
-        end
-      end
-
-      # ============================================
-      # REFRESH TOKEN
-      # ============================================
-      desc "Refresh JWT token",
-            tags: [ "Authentication" ],
-            success: { code: 200, message: "Token refreshed" },
-            failure: [
-              { code: 401, message: "Invalid or expired token" }
-            ],
-            headers: {
-              "Authorization" => {
-                description: "Bearer token",
-                required: true
-              }
-            }
-      post :refresh do
-        token = extract_token
-
-        unless token
-          api_error(
-            message: "Token is required",
-            status: 401
-          )
-        end
-
-        result = Authentication::RefreshTokenService.call(token: token)
-
-        if result.success?
-          status 200
-          success_response(
-            data: result.data,
-            message: result.message
-          )
-        else
-          api_error(
-            message: result.message || "Token refresh failed",
-            status: 401,
-            errors: result.errors
-          )
-        end
-      end
-
-      # ============================================
-      # VALIDATE TOKEN
-      # ============================================
-      desc "Validate JWT token",
-            tags: [ "Authentication" ],
-            success: { code: 200, message: "Token is valid" },
-            failure: [
-              { code: 401, message: "Invalid token" }
-            ],
-            headers: {
-              "Authorization" => {
-                description: "Bearer token",
-                required: true
-              }
-            }
-      get :validate do
-        authenticate!
-
-        status 200
-        success_response(
-          data: {
-            valid: true,
-            user: {
-              id: current_user.id,
-              email: current_user.email,
-              full_name: current_user.full_name,
-              context: current_context,
-              tenant_id: current_tenant_id
-            },
-            expires_at: Time.at(current_payload[:exp].to_i).iso8601
-          },
-          message: "Token is valid"
-        )
-      end
-
-      # ============================================
-      # ME (Current User Info)
-      # ============================================
-      desc "Get current user information",
-            tags: [ "Authentication" ],
-            success: { code: 200, message: "User information retrieved" },
-            failure: [
-              { code: 401, message: "Authentication required" }
-            ],
-            headers: {
-              "Authorization" => {
-                description: "Bearer token",
-                required: true
-              }
-            }
-      get :me do
-        authenticate!
-
-        status 200
-        success_response(
-          data: {
-            id: current_user.id,
-            email: current_user.email,
-            first_name: current_user.first_name,
-            last_name: current_user.last_name,
-            full_name: current_user.full_name,
-            phone: current_user.phone,
-            avatar_url: current_user.avatar_url,
-            email_verified: current_user.email_verified?,
-            context: current_context,
-            tenant_id: current_tenant_id,
-            created_at: current_user.created_at.iso8601,
-            last_login_at: current_user.last_login_at&.iso8601
-          }
-        )
-      end
-
-      # ============================================
-      # CONTEXTOS DISPONIBLES
-      # ============================================
-      desc "Get available contexts for current user",
-            tags: [ "Authentication" ],
-            success: { code: 200 },
-            failure: [ { code: 401, message: "Authentication required" } ],
-            detail: "Returns all contexts (platform and tenants) the user has access to"
-      get :contexts do
-        authenticate!
-
-        contexts = AvailableContextsQuery.new(current_user).call
-
-        success_response(
-          data: {
-            contexts: contexts,
-            total: contexts.size,
-            has_multiple: contexts.size > 1
-          }
-        )
-      end
-    end
-
-    private
-
-    def extract_token
-      auth_header = headers["Authorization"] || headers["authorization"]
-      return nil unless auth_header
-
-      match = auth_header.match(/^Bearer\s+(.+)$/i)
-      match ? match[1] : nil
     end
   end
 end
@@ -2099,6 +1283,517 @@ module V1
   end
 end
 
+# app/api/v1/tenant/profile_api.rb
+
+module V1
+  module Tenant
+    class ProfileApi < Grape::API
+      helpers Helpers::AuthenticationHelper
+      helpers Helpers::TenantHelper
+      helpers Helpers::AuthorizationHelper
+
+      namespace :tenant do
+        # ============================================
+        # INFORMACIÓN DEL TENANT ACTUAL
+        # ============================================
+        desc "Get current tenant information",
+              tags: [ "Tenant" ],
+              success: { code: 200 }
+        get :profile do
+          authenticate!
+
+          # Determinar el tenant a consultar
+          target_tenant = if current_user.platform_admin?
+            # Platform admin debe proporcionar tenant_id
+            unless params[:tenant_id]
+              api_error(
+                message: "Platform admins must provide tenant_id parameter",
+                status: 400
+              )
+            end
+
+            tenant = ::Tenant.find_by(id: params[:tenant_id])
+            unless tenant
+              api_error(message: "Tenant not found", status: 404)
+            end
+
+            tenant
+          else
+            require_tenant!
+            verify_tenant_access!
+            current_tenant
+          end
+
+          # Autorizar con política explícita
+          authorize!(target_tenant, :show?, policy_class: TenantPolicy)
+
+          present target_tenant,
+                  with: Entities::TenantEntity,
+                  type: :detailed,
+                  show_limits: true,
+                  show_subscription: true,
+                  show_timestamps: true
+        end
+
+        # ============================================
+        # MEMBRESÍA DEL USUARIO ACTUAL
+        # ============================================
+        desc "Get current user membership in tenant",
+              tags: [ "Tenant" ]
+        params do
+          optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+        end
+        get :my_membership do
+          authenticate!
+
+          # Determinar tenant_id
+          target_tenant_id = if current_user.platform_admin?
+            params[:tenant_id] || api_error(
+              message: "Platform admins must provide tenant_id parameter",
+              status: 400
+            )
+          else
+            require_tenant!
+            current_tenant.id
+          end
+
+          membership = current_user.tenant_memberships
+                                  .find_by(tenant_id: target_tenant_id, status: "active")
+
+          unless membership
+            api_error(message: "Membership not found", status: 404)
+          end
+
+          # Autorizar
+          authorize!(membership, :show?, policy_class: TenantMembershipPolicy)
+
+          present membership,
+                  with: Entities::TenantMembershipEntity,
+                  include_tenant: false,
+                  include_user: false,
+                  show_timestamps: true
+        end
+
+        # ============================================
+        # USUARIOS DEL TENANT
+        # ============================================
+        desc "List users in tenant",
+              tags: [ "Tenant" ]
+        params do
+          optional :tenant_id, type: Integer, desc: "Tenant ID (required for platform admins)"
+          optional :status, type: String, values: TenantMembership::STATUSES
+          optional :role_slug, type: String
+          optional :page, type: Integer, default: 1
+          optional :per_page, type: Integer, default: 25, values: 1..100
+        end
+        get :users do
+          authenticate!
+
+          # Determinar el tenant
+          target_tenant = if current_user.platform_admin?
+            unless params[:tenant_id]
+              api_error(
+                message: "Platform admins must provide tenant_id parameter",
+                status: 400
+              )
+            end
+
+            tenant = ::Tenant.find_by(id: params[:tenant_id])
+            unless tenant
+              api_error(message: "Tenant not found", status: 404)
+            end
+
+            tenant
+          else
+            unless current_tenant
+              api_error(message: "Tenant context is required", status: 400)
+            end
+
+            unless current_user.has_tenant_access?(current_tenant.id)
+              api_error(message: "Access denied to this tenant", status: 403)
+            end
+
+            current_tenant
+          end
+
+          # Verificar permisos (admin o manager)
+          unless current_user.platform_admin? ||
+                 current_user.tenant_admin?(target_tenant.id) ||
+                 current_user.tenant_manager?(target_tenant.id)
+            api_error(message: "Admin or Manager role required", status: 403)
+          end
+
+          # Usar policy_scope para obtener membresías permitidas
+          # Como estamos filtrando por tenant específico, establecemos temporalmente el contexto
+          memberships = if current_user.platform_admin?
+            # Platform admins ven todas las membresías del tenant solicitado
+            target_tenant.tenant_memberships.kept.includes(:role, :user)
+          else
+            # Usar policy_scope
+            ActsAsTenant.with_tenant(target_tenant) do
+              policy_scope(
+                TenantMembership.kept.includes(:role, :user),
+                policy_scope_class: TenantMembershipPolicy::Scope
+              )
+            end
+          end
+
+          # Filtros
+          memberships = memberships.where(status: params[:status]) if params[:status]
+
+          if params[:role_slug]
+            role = Role.tenant_roles.find_by(slug: params[:role_slug])
+            memberships = memberships.where(role_id: role.id) if role
+          end
+
+          # Paginación
+          memberships = memberships.page(params[:page]).per(params[:per_page])
+
+          success_response(
+            data: memberships.map { |m|
+              Entities::TenantMembershipEntity.represent(
+                m,
+                include_user: true,
+                include_tenant: false
+              )
+            },
+            meta: {
+              current_page: memberships.current_page,
+              total_pages: memberships.total_pages,
+              total_count: memberships.total_count,
+              per_page: params[:per_page],
+              tenant_id: target_tenant.id,
+              tenant_name: target_tenant.name
+            }
+          )
+        end
+
+        # ============================================
+        # INVITAR USUARIO
+        # ============================================
+        desc "Invite user to tenant",
+              tags: [ "Tenant" ]
+        params do
+          optional :tenant_id, type: Integer
+          requires :email, type: String
+          requires :first_name, type: String
+          requires :last_name, type: String
+          requires :role_slug, type: String
+          optional :phone, type: String
+        end
+        post :invite do
+          authenticate!
+
+          # Determinar el tenant
+          target_tenant = if current_user.platform_admin?
+            unless params[:tenant_id]
+              api_error(
+                message: "Platform admins must provide tenant_id parameter",
+                status: 400
+              )
+            end
+
+            ::Tenant.find(params[:tenant_id])
+          else
+            require_tenant!
+            verify_tenant_access!
+            current_tenant
+          end
+
+          # Verificar permisos
+          unless current_user.platform_admin? ||
+                 current_user.tenant_admin?(target_tenant.id) ||
+                 current_user.tenant_manager?(target_tenant.id)
+            api_error(message: "Admin or Manager role required", status: 403)
+          end
+
+          # Crear membresía temporal para autorización
+          temp_membership = TenantMembership.new(tenant: target_tenant)
+          authorize!(temp_membership, :create?, policy_class: TenantMembershipPolicy)
+
+          result = Platform::Tenants::InviteService.call(
+            tenant: target_tenant,
+            params: declared(params).except(:tenant_id),
+            invited_by: current_user
+          )
+
+          if result.success?
+            status 201
+            success_response(
+              data: {
+                user: Entities::UserEntity.represent(result.data[:user]),
+                membership: Entities::TenantMembershipEntity.represent(
+                  result.data[:membership],
+                  include_user: false,
+                  include_tenant: false
+                ),
+                invitation_token: result.data[:invitation_token]
+              },
+              message: result.message
+            )
+          else
+            api_error(
+              message: result.message,
+              errors: result.errors,
+              status: 422
+            )
+          end
+        end
+
+        # ============================================
+        # ESTADÍSTICAS DEL TENANT
+        # ============================================
+        desc "Get tenant statistics",
+              tags: [ "Tenant" ]
+        params do
+          optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+        end
+        get :stats do
+          authenticate!
+
+          # Determinar el tenant
+          target_tenant = if current_user.platform_admin?
+            unless params[:tenant_id]
+              api_error(
+                message: "Platform admins must provide tenant_id parameter",
+                status: 400
+              )
+            end
+
+            tenant = ::Tenant.find_by(id: params[:tenant_id])
+            unless tenant
+              api_error(message: "Tenant not found", status: 404)
+            end
+
+            tenant
+          else
+            require_tenant!
+            unless current_user.tenant_admin?(current_tenant.id)
+              api_error(message: "Admin role required", status: 403)
+            end
+            current_tenant
+          end
+
+          stats = {
+            users: {
+              total: target_tenant.tenant_memberships.count,
+              active: target_tenant.active_memberships.count,
+              invited: target_tenant.tenant_memberships.invited.count,
+              suspended: target_tenant.tenant_memberships.suspended.count
+            },
+            roles: TenantMembership.role_distribution_for_tenant(target_tenant.id),
+            limits: {
+              max_users: target_tenant.max_users,
+              current_users: target_tenant.active_users.count,
+              remaining_slots: target_tenant.remaining_user_slots,
+              limit_reached: target_tenant.user_limit_reached?
+            },
+            subscription: {
+              status: target_tenant.status,
+              plan: target_tenant.plan,
+              trial_days_remaining: target_tenant.trial? ? target_tenant.trial_days_remaining : nil
+            }
+          }
+
+          success_response(data: stats)
+        end
+      end
+    end
+  end
+end
+
+# app/api/v1/tenant/roles_api.rb
+
+module V1
+  module Tenant
+    # API para consultar roles disponibles en el tenant
+    class RolesApi < Grape::API
+      helpers Helpers::AuthenticationHelper
+      helpers Helpers::TenantHelper
+      helpers Helpers::AuthorizationHelper
+
+      namespace :tenant do
+        namespace :roles do
+          # ============================================
+          # LISTAR ROLES DISPONIBLES
+          # ============================================
+          desc "List available roles for tenant",
+                tags: [ "Tenant - Roles" ],
+                success: { code: 200 },
+                detail: "Returns roles that can be assigned to users in the tenant"
+          params do
+            optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+            optional :include_usage, type: Boolean, default: false
+          end
+          get do
+            authenticate!
+
+            # Determinar tenant
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : nil
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            # Obtener roles de tenant
+            roles = Role.tenant_roles.by_priority
+
+            # Incluir estadísticas de uso si se solicita
+            data = roles.map do |role|
+              role_data = {
+                id: role.id,
+                name: role.name,
+                slug: role.slug,
+                description: role.description,
+                requires_scope: role.requires_scope,
+                is_system: role.is_system,
+                priority: role.priority
+              }
+
+              if params[:include_usage] && target_tenant
+                role_data[:usage_count] = target_tenant.tenant_memberships
+                                                      .where(role_id: role.id)
+                                                      .kept
+                                                      .count
+              end
+
+              role_data
+            end
+
+            success_response(
+              data: data,
+              meta: {
+                total: roles.count,
+                tenant_id: target_tenant&.id
+              }
+            )
+          end
+
+          # ============================================
+          # VER DETALLES DE ROL
+          # ============================================
+          desc "Get role details",
+                tags: [ "Tenant - Roles" ],
+                success: { code: 200 }
+          params do
+            requires :slug, type: String, desc: "Role slug"
+            optional :tenant_id, type: Integer
+          end
+          get ":slug" do
+            authenticate!
+
+            role = Role.tenant_roles.find_by(slug: params[:slug])
+            unless role
+              api_error(message: "Role not found", status: 404)
+            end
+
+            # Determinar tenant para estadísticas
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : nil
+            else
+              current_tenant
+            end
+
+            data = {
+              id: role.id,
+              name: role.name,
+              slug: role.slug,
+              description: role.description,
+              context: role.context,
+              requires_scope: role.requires_scope,
+              is_system: role.is_system,
+              priority: role.priority,
+              settings: role.settings,
+              created_at: role.created_at.iso8601,
+              updated_at: role.updated_at.iso8601
+            }
+
+            # Estadísticas de uso en el tenant
+            if target_tenant
+              data[:usage_in_tenant] = {
+                total_users: target_tenant.tenant_memberships
+                                         .where(role_id: role.id)
+                                         .kept
+                                         .count,
+                active_users: target_tenant.tenant_memberships
+                                          .where(role_id: role.id, status: "active")
+                                          .kept
+                                          .count
+              }
+            end
+
+            success_response(data: data)
+          end
+
+          # ============================================
+          # PERMISOS DE ROL
+          # ============================================
+          desc "Get role permissions description",
+                tags: [ "Tenant - Roles" ],
+                success: { code: 200 },
+                detail: "Returns human-readable description of what each role can do"
+          get "permissions/summary" do
+            authenticate!
+
+            permissions = {
+              tenant_admin: {
+                name: "Tenant Admin",
+                description: "Full control over the tenant",
+                can_do: [
+                  "Manage all users (create, edit, delete, suspend)",
+                  "Assign and modify user roles",
+                  "Manage node and vehicle scopes",
+                  "Configure tenant settings",
+                  "View all reports and statistics",
+                  "Manage organizational structure",
+                  "Manage fleet vehicles",
+                  "Cannot delete primary admin"
+                ],
+                requires_scope: false
+              },
+              tenant_manager: {
+                name: "Tenant Manager",
+                description: "Manages users and operations",
+                can_do: [
+                  "View all users",
+                  "Invite new users",
+                  "Assign node and vehicle scopes",
+                  "View reports and statistics",
+                  "Manage assigned vehicles and nodes",
+                  "Cannot change user roles",
+                  "Cannot delete users"
+                ],
+                requires_scope: false
+              },
+              tenant_driver: {
+                name: "Tenant Driver",
+                description: "Operates vehicles and views assigned data",
+                can_do: [
+                  "View own profile",
+                  "View assigned vehicles",
+                  "View assigned organizational nodes",
+                  "Operate assigned vehicles (if granted drive access)",
+                  "View basic reports for assigned resources",
+                  "Cannot manage other users",
+                  "Cannot modify organizational structure"
+                ],
+                requires_scope: true
+              }
+            }
+
+            success_response(
+              data: permissions,
+              message: "Role permissions summary"
+            )
+          end
+        end
+      end
+    end
+  end
+end
+
 # app/api/v1/tenant/scopes_api.rb
 
 module V1
@@ -2251,6 +1946,718 @@ module V1
     end
   end
 end
+
+# app/api/v1/tenant/scopes_api.rb
+
+module V1
+  module Tenant
+    class ScopesApi < Grape::API
+      helpers Helpers::AuthenticationHelper
+      helpers Helpers::TenantHelper
+      helpers Helpers::AuthorizationHelper
+
+      namespace :tenant do
+        namespace :scopes do
+          # ============================================
+          # ASIGNAR SCOPE DE NODO
+          # ============================================
+          desc "Assign node scope to user",
+                tags: [ "Tenant - Scopes" ]
+          params do
+            optional :tenant_id, type: Integer
+            requires :user_id, type: Integer
+            requires :node_id, type: Integer
+            optional :access_type, type: String, values: UserNodeScope::ACCESS_TYPES, default: "read"
+            optional :include_children, type: Boolean, default: true
+          end
+          post :nodes do
+            authenticate!
+
+            # Determinar tenant
+            target_tenant = if current_user.platform_admin?
+              unless params[:tenant_id]
+                api_error(message: "Platform admins must provide tenant_id", status: 400)
+              end
+              ::Tenant.find(params[:tenant_id])
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            user = User.find(params[:user_id])
+            node = OrganizationalNode.find(params[:node_id])
+
+            # Autorizar
+            require_tenant_admin_or_manager!
+
+            result = ::Tenant::Scopes::AssignNodeScopeService.call(
+              user: user,
+              node: node,
+              tenant: target_tenant,
+              params: declared(params),
+              current_user: current_user
+            )
+
+            if result.success?
+              status 201
+              success_response(
+                data: Entities::UserNodeScopeEntity.represent(result.data),
+                message: result.message
+              )
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+
+          # ============================================
+          # ASIGNAR SCOPE DE VEHÍCULO
+          # ============================================
+          desc "Assign vehicle scope to user",
+                tags: [ "Tenant - Scopes" ]
+          params do
+            optional :tenant_id, type: Integer
+            requires :user_id, type: Integer
+            requires :vehicle_id, type: Integer
+            optional :access_type, type: String, values: UserVehicleScope::ACCESS_TYPES, default: "read"
+            optional :valid_from, type: DateTime
+            optional :valid_until, type: DateTime
+          end
+          post :vehicles do
+            authenticate!
+
+            # Determinar tenant
+            target_tenant = if current_user.platform_admin?
+              unless params[:tenant_id]
+                api_error(message: "Platform admins must provide tenant_id", status: 400)
+              end
+              ::Tenant.find(params[:tenant_id])
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            user = User.find(params[:user_id])
+            vehicle = Vehicle.find(params[:vehicle_id])
+
+            # Autorizar
+            require_tenant_admin_or_manager!
+
+            result = ::Tenant::Scopes::AssignVehicleScopeService.call(
+              user: user,
+              vehicle: vehicle,
+              tenant: target_tenant,
+              params: declared(params),
+              current_user: current_user
+            )
+
+            if result.success?
+              status 201
+              success_response(
+                data: Entities::UserVehicleScopeEntity.represent(result.data),
+                message: result.message
+              )
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+
+          # ============================================
+          # REVOCAR SCOPE
+          # ============================================
+          desc "Revoke scope",
+                tags: [ "Tenant - Scopes" ]
+          params do
+            requires :type, type: String, values: %w[node vehicle]
+            requires :id, type: Integer
+          end
+          delete ":type/:id" do
+            authenticate!
+            require_tenant_admin_or_manager!
+
+            scope = case params[:type]
+            when "node"
+                      UserNodeScope.find(params[:id])
+            when "vehicle"
+                      UserVehicleScope.find(params[:id])
+            end
+
+            result = ::Tenant::Scopes::RevokeScopeService.call(
+              scope: scope,
+              current_user: current_user
+            )
+
+            if result.success?
+              success_response(message: result.message)
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+# frozen_string_literal: true
+
+# app/api/v1/tenant/users_api.rb
+
+module V1
+  module Tenant
+    class UsersApi < Grape::API
+      helpers Helpers::AuthenticationHelper
+      helpers Helpers::TenantHelper
+      helpers Helpers::AuthorizationHelper
+
+      namespace :tenant do
+        namespace :users do
+          # ============================================
+          # LISTAR USUARIOS DEL TENANT
+          # ============================================
+          desc "List users in current tenant",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+            optional :status, type: String, values: TenantMembership::STATUSES
+            optional :role_slug, type: String
+            optional :search, type: String, desc: "Search by name or email"
+            optional :include_scopes, type: Boolean, default: false
+            optional :page, type: Integer, default: 1
+            optional :per_page, type: Integer, default: 25, values: 1..100
+          end
+          get do
+            authenticate!
+
+            # Determinar tenant
+            target_tenant = if current_user.platform_admin?
+              unless params[:tenant_id]
+                api_error(message: "Platform admins must provide tenant_id", status: 400)
+              end
+              ::Tenant.find(params[:tenant_id])
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            # Autorizar
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id) ||
+                   current_user.tenant_manager?(target_tenant.id)
+              api_error(message: "Admin or Manager role required", status: 403)
+            end
+
+            # Obtener membresías con usuarios
+            memberships = target_tenant.tenant_memberships.kept
+                                      .includes(:role, :user, user: [ :user_node_scopes, :user_vehicle_scopes ])
+
+            # Filtros
+            memberships = memberships.where(status: params[:status]) if params[:status]
+
+            if params[:role_slug]
+              memberships = memberships.joins(:role)
+                                      .where(roles: { slug: params[:role_slug] })
+            end
+
+            if params[:search]
+              search_term = "%#{params[:search].downcase}%"
+              memberships = memberships.joins(:user)
+                                      .where("LOWER(users.email) LIKE ? OR
+                                              LOWER(users.first_name) LIKE ? OR
+                                              LOWER(users.last_name) LIKE ?",
+                                            search_term, search_term, search_term)
+            end
+
+            # Paginación
+            memberships = memberships.page(params[:page]).per(params[:per_page])
+
+            # Serializar
+            success_response(
+              data: memberships.map { |m|
+                serialize_user_with_membership(m, include_scopes: params[:include_scopes])
+              },
+              meta: {
+                current_page: memberships.current_page,
+                total_pages: memberships.total_pages,
+                total_count: memberships.total_count,
+                per_page: params[:per_page]
+              }
+            )
+          end
+
+          # ============================================
+          # VER USUARIO
+          # ============================================
+          desc "Get user details",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            optional :tenant_id, type: Integer
+            optional :include_scopes, type: Boolean, default: true
+          end
+          get ":id" do
+            authenticate!
+
+            # Determinar tenant
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            user = User.find(params[:id])
+
+            # Autorizar
+            unless current_user.platform_admin? ||
+                   current_user.id == user.id ||
+                   current_user.tenant_admin?(target_tenant.id) ||
+                   current_user.tenant_manager?(target_tenant.id)
+              api_error(message: "Access denied", status: 403)
+            end
+
+            # Obtener membresía en el tenant
+            membership = user.tenant_memberships
+                            .includes(:role)
+                            .find_by(tenant_id: target_tenant.id)
+
+            unless membership
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            success_response(
+              data: serialize_user_with_membership(
+                membership,
+                include_scopes: params[:include_scopes],
+                detailed: true
+              )
+            )
+          end
+
+          # ============================================
+          # CREAR USUARIO (CON ROL Y SCOPES)
+          # ============================================
+          desc "Create user with role and scopes",
+                tags: [ "Tenant - Users" ],
+                success: { code: 201 },
+                detail: "Creates user, assigns role, and optionally assigns scopes in one transaction"
+          params do
+            optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+
+            # Datos básicos del usuario
+            requires :email, type: String
+            requires :first_name, type: String
+            requires :last_name, type: String
+            optional :phone, type: String
+            optional :password, type: String, desc: "If not provided, user will be invited"
+
+            # Rol
+            requires :role_slug, type: String,
+                     values: -> { Role.tenant_roles.pluck(:slug) },
+                     desc: "tenant_admin, tenant_manager, tenant_driver"
+
+            # Scopes (opcionales según rol)
+            optional :node_scopes, type: Array do
+              requires :organizational_node_id, type: Integer
+              optional :access_type, type: String,
+                       values: UserNodeScope::ACCESS_TYPES,
+                       default: "read"
+              optional :include_children, type: Boolean, default: true
+            end
+
+            optional :vehicle_scopes, type: Array do
+              requires :vehicle_id, type: Integer
+              optional :access_type, type: String,
+                       values: UserVehicleScope::ACCESS_TYPES,
+                       default: "read"
+              optional :valid_from, type: DateTime
+              optional :valid_until, type: DateTime
+            end
+          end
+          post do
+            authenticate!
+
+            # Determinar tenant
+            target_tenant = if current_user.platform_admin?
+              unless params[:tenant_id]
+                api_error(message: "Platform admins must provide tenant_id", status: 400)
+              end
+              ::Tenant.find(params[:tenant_id])
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            # Autorizar
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id)
+              api_error(message: "Admin role required", status: 403)
+            end
+
+            result = ::Tenant::Users::CreateService.call(
+              params: declared(params).except(:tenant_id),
+              tenant: target_tenant,
+              current_user: current_user
+            )
+
+            if result.success?
+              status 201
+              success_response(
+                data: serialize_user_with_membership(
+                  result.data[:membership],
+                  include_scopes: true,
+                  detailed: true
+                ),
+                message: result.message
+              )
+            else
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
+            end
+          end
+
+          # ============================================
+          # ACTUALIZAR DATOS BÁSICOS
+          # ============================================
+          desc "Update user basic information",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            optional :first_name, type: String
+            optional :last_name, type: String
+            optional :phone, type: String
+            optional :avatar_url, type: String
+          end
+          patch ":id" do
+            authenticate!
+            require_tenant!
+            verify_tenant_access!
+
+            user = User.find(params[:id])
+
+            # Autorizar
+            unless current_user.platform_admin? ||
+                   current_user.id == user.id ||
+                   current_user.tenant_admin?(current_tenant.id)
+              api_error(message: "Not authorized", status: 403)
+            end
+
+            result = ::Tenant::Users::UpdateService.call(
+              user: user,
+              params: declared(params).except(:id),
+              current_user: current_user
+            )
+
+            if result.success?
+              membership = user.tenant_memberships
+                              .find_by(tenant_id: current_tenant.id)
+
+              success_response(
+                data: serialize_user_with_membership(membership, detailed: true),
+                message: result.message
+              )
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+
+          # ============================================
+          # CAMBIAR ROL
+          # ============================================
+          desc "Change user role",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 },
+                detail: "Changes role and automatically adjusts scopes based on role requirements"
+          params do
+            requires :id, type: Integer
+            requires :role_slug, type: String,
+                     values: -> { Role.tenant_roles.pluck(:slug) }
+          end
+          patch ":id/role" do
+            authenticate!
+            require_tenant!
+            verify_tenant_access!
+            require_tenant_admin!
+
+            user = User.find(params[:id])
+            membership = user.tenant_memberships
+                            .find_by(tenant_id: current_tenant.id)
+
+            unless membership
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            result = ::Tenant::Users::ChangeRoleService.call(
+              membership: membership,
+              new_role_slug: params[:role_slug],
+              current_user: current_user
+            )
+
+            if result.success?
+              success_response(
+                data: serialize_user_with_membership(
+                  result.data[:membership],
+                  include_scopes: true,
+                  detailed: true
+                ),
+                message: result.message
+              )
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+
+          # ============================================
+          # ACTUALIZAR SCOPES
+          # ============================================
+          desc "Update user scopes",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+
+            optional :node_scopes, type: Array do
+              requires :organizational_node_id, type: Integer
+              optional :access_type, type: String, values: UserNodeScope::ACCESS_TYPES
+              optional :include_children, type: Boolean
+            end
+
+            optional :vehicle_scopes, type: Array do
+              requires :vehicle_id, type: Integer
+              optional :access_type, type: String, values: UserVehicleScope::ACCESS_TYPES
+              optional :valid_from, type: DateTime
+              optional :valid_until, type: DateTime
+            end
+          end
+          patch ":id/scopes" do
+            authenticate!
+            require_tenant!
+            verify_tenant_access!
+            require_tenant_admin_or_manager!
+
+            user = User.find(params[:id])
+
+            result = ::Tenant::Users::UpdateScopesService.call(
+              user: user,
+              tenant: current_tenant,
+              params: declared(params).except(:id),
+              current_user: current_user
+            )
+
+            if result.success?
+              membership = user.tenant_memberships
+                              .find_by(tenant_id: current_tenant.id)
+
+              success_response(
+                data: serialize_user_with_membership(
+                  membership,
+                  include_scopes: true,
+                  detailed: true
+                ),
+                message: result.message
+              )
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+
+          # ============================================
+          # SUSPENDER USUARIO
+          # ============================================
+          desc "Suspend user",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            optional :reason, type: String
+          end
+          post ":id/suspend" do
+            authenticate!
+            require_tenant!
+            verify_tenant_access!
+            require_tenant_admin!
+
+            user = User.find(params[:id])
+            membership = user.tenant_memberships
+                            .find_by(tenant_id: current_tenant.id)
+
+            unless membership
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            # No permitir suspender al primary admin
+            if membership.is_primary_admin?
+              api_error(message: "Cannot suspend primary admin", status: 422)
+            end
+
+            membership.update!(status: "suspended")
+
+            success_response(
+              data: serialize_user_with_membership(membership),
+              message: "User suspended successfully"
+            )
+          end
+
+          # ============================================
+          # REACTIVAR USUARIO
+          # ============================================
+          desc "Reactivate user",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+          end
+          post ":id/activate" do
+            authenticate!
+            require_tenant!
+            verify_tenant_access!
+            require_tenant_admin!
+
+            user = User.find(params[:id])
+            membership = user.tenant_memberships
+                            .find_by(tenant_id: current_tenant.id)
+
+            unless membership
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            membership.update!(status: "active")
+
+            success_response(
+              data: serialize_user_with_membership(membership),
+              message: "User activated successfully"
+            )
+          end
+
+          # ============================================
+          # ELIMINAR USUARIO DEL TENANT
+          # ============================================
+          desc "Remove user from tenant",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+          end
+          delete ":id" do
+            authenticate!
+            require_tenant!
+            verify_tenant_access!
+            require_tenant_admin!
+
+            user = User.find(params[:id])
+            membership = user.tenant_memberships
+                            .find_by(tenant_id: current_tenant.id)
+
+            unless membership
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            # No permitir eliminar al primary admin
+            if membership.is_primary_admin?
+              api_error(message: "Cannot remove primary admin", status: 422)
+            end
+
+            result = ::Tenant::Users::RemoveService.call(
+              membership: membership,
+              current_user: current_user
+            )
+
+            if result.success?
+              success_response(message: result.message)
+            else
+              api_error(message: result.message, errors: result.errors, status: 422)
+            end
+          end
+
+          # ============================================
+          # HELPER PRIVADO PARA SERIALIZACIÓN
+          # ============================================
+          helpers do
+            def serialize_user_with_membership(membership, include_scopes: false, detailed: false)
+              user = membership.user
+
+              data = {
+                id: user.id,
+                email: user.email,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                full_name: user.full_name,
+                phone: user.phone,
+                avatar_url: user.avatar_url,
+                email_verified: user.email_verified?,
+
+                # Membership data
+                membership: {
+                  id: membership.id,
+                  role_id: membership.role_id,
+                  role_slug: membership.role_slug,
+                  role_name: membership.role_name,
+                  status: membership.status,
+                  is_primary_admin: membership.is_primary_admin,
+                  is_default: membership.is_default,
+                  created_at: membership.created_at.iso8601
+                }
+              }
+
+              if detailed
+                data[:created_at] = user.created_at.iso8601
+                data[:last_login_at] = user.last_login_at&.iso8601
+                data[:membership][:invitation_pending] = membership.invitation_pending?
+              end
+
+              if include_scopes
+                data[:scopes] = {
+                  nodes: user.user_node_scopes
+                            .where(tenant_id: current_tenant.id)
+                            .includes(:organizational_node)
+                            .map { |scope|
+                              {
+                                id: scope.id,
+                                node_id: scope.organizational_node_id,
+                                node_name: scope.organizational_node.name,
+                                node_path: scope.organizational_node.full_path,
+                                access_type: scope.access_type,
+                                include_children: scope.include_children
+                              }
+                            },
+
+                  vehicles: user.user_vehicle_scopes
+                               .where(tenant_id: current_tenant.id)
+                               .includes(:vehicle)
+                               .map { |scope|
+                                 {
+                                   id: scope.id,
+                                   vehicle_id: scope.vehicle_id,
+                                   vehicle_name: scope.vehicle.name,
+                                   license_plate: scope.vehicle.license_plate,
+                                   access_type: scope.access_type,
+                                   valid_from: scope.valid_from&.iso8601,
+                                   valid_until: scope.valid_until&.iso8601,
+                                   active: scope.active?
+                                 }
+                               }
+                }
+              end
+
+              data
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
 
 # app/api/v1/tenant/vehicles_api.rb
 
@@ -2493,268 +2900,427 @@ module V1
   end
 end
 
-# app/api/v1/base.rb
+# app/api/authentication_api.rb
 
 module V1
-  # Base de la versión 1 de la API
-  # Aquí se montan todos los endpoints específicos de v1
-  class Base < Grape::API
-    version "v1", using: :path
+  # API de Autenticación
+  # Maneja login, logout, refresh de tokens y validación
+  class AuthenticationApi < Grape::API
+    helpers Helpers::AuthenticationHelper
 
-    # Montar endpoints de autenticación (disponible sin contexto)
-    mount V1::AuthenticationApi
-    mount V1::Tenant::ProfileApi
-    mount V1::Tenant::ProfileApi
+    resource :auth do
+      # ============================================
+      # LOGIN - PASO 1: VALIDAR CREDENCIALES
+      # ============================================
+      desc "User login - Step 1: Validate credentials",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "Credentials validated" },
+            failure: [
+              { code: 401, message: "Invalid credentials" },
+              { code: 422, message: "Validation error" }
+            ],
+            detail: "Validates credentials and returns available contexts. If user has multiple contexts, requires Step 2."
+      params do
+        requires :email,
+                  type: String,
+                  desc: "User email",
+                  documentation: { example: "user@example.com" }
+        requires :password,
+                  type: String,
+                  desc: "User password",
+                  documentation: { example: "password123" }
+      end
+      post :login do
+        result = Authentication::LoginStep1Service.call(
+          email: params[:email],
+          password: params[:password],
+          request_info: request_info
+        )
 
-    # Endpoint de health check (siempre disponible, sin autenticación)
-    desc "Health check endpoint"
-    get :health do
-      {
-        status: "ok",
-        version: "v1",
-        timestamp: Time.current.iso8601,
-        environment: Rails.env,
-        database: ActiveRecord::Base.connection.active? ? "connected" : "disconnected"
-      }
+        if result.success?
+          status 200
+          success_response(
+            data: result.data,
+            message: result.message
+          )
+        else
+          api_error(
+            message: result.message || "Authentication failed",
+            status: 401,
+            errors: result.errors
+          )
+        end
+      end
+
+      # ============================================
+      # LOGIN - PASO 2: SELECCIONAR CONTEXTO
+      # ============================================
+      desc "User login - Step 2: Select context",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "Login successful" },
+            failure: [
+              { code: 401, message: "Invalid session token" },
+              { code: 422, message: "Invalid context" }
+            ],
+            detail: "Selects a specific context and returns JWT token"
+      params do
+        requires :session_token,
+                  type: String,
+                  desc: "Session token from Step 1"
+        requires :context_type,
+                  type: String,
+                  values: [ "platform", "tenant" ],
+                  desc: "Type of context to access"
+        optional :tenant_id,
+                  type: Integer,
+                  desc: "Tenant ID (required if context_type is tenant)"
+      end
+      post "login/select-context" do
+        result = Authentication::LoginStep2Service.call(
+          session_token: params[:session_token],
+          context_type: params[:context_type],
+          tenant_id: params[:tenant_id]
+        )
+
+        if result.success?
+          status 200
+          success_response(
+            data: result.data,
+            message: result.message
+          )
+        else
+          api_error(
+            message: result.message || "Context selection failed",
+            status: 401,
+            errors: result.errors
+          )
+        end
+      end
+
+      # ============================================
+      # LOGIN - ACCESO DIRECTO (LEGACY/SIMPLIFICADO)
+      # ============================================
+      desc "Direct login with context (simplified)",
+            tags: [ "Authentication" ],
+            success: { code: 200 },
+            failure: [ { code: 401, message: "Invalid credentials" } ],
+            detail: "Legacy endpoint: login directly with tenant_id. Use two-step flow for better UX."
+      params do
+        requires :email, type: String
+        requires :password, type: String
+        optional :tenant_id, type: Integer, desc: "Tenant ID for direct access"
+      end
+      post "login/direct" do
+        # Paso 1: Validar credenciales
+        step1_result = Authentication::LoginStep1Service.call(
+          email: params[:email],
+          password: params[:password],
+          request_info: request_info
+        )
+
+        if step1_result.failure?
+          api_error(
+            message: step1_result.message || "Authentication failed",
+            status: 401,
+            errors: step1_result.errors
+          )
+        end
+
+        # Determinar contexto automáticamente
+        contexts = step1_result.data[:contexts]
+        default_context = step1_result.data[:default_context]
+
+        # Si tiene tenant_id, buscar ese contexto
+        if params[:tenant_id]
+          selected = contexts.find { |c| c[:type] == "tenant" && c[:tenant_id] == params[:tenant_id] }
+          unless selected
+            api_error(
+              message: "Invalid tenant_id or no access",
+              status: 403
+            )
+          end
+        else
+          # Usar contexto por defecto
+          selected = default_context
+          unless selected
+            api_error(
+              message: "Multiple contexts available. Use two-step login.",
+              status: 400,
+              errors: [ "Please use POST /auth/login and POST /auth/login/select-context" ]
+            )
+          end
+        end
+
+        # Paso 2: Generar token
+        step2_result = Authentication::LoginStep2Service.call(
+          session_token: step1_result.data[:session_token],
+          context_type: selected[:type],
+          tenant_id: selected[:tenant_id]
+        )
+
+        if step2_result.success?
+          status 200
+          success_response(
+            data: step2_result.data,
+            message: "Login successful"
+          )
+        else
+          api_error(
+            message: step2_result.message || "Token generation failed",
+            status: 401,
+            errors: step2_result.errors
+          )
+        end
+      end
+
+      # ============================================
+      # LOGOUT
+      # ============================================
+      desc "User logout",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "Logout successful" },
+            failure: [
+              { code: 401, message: "Authentication required" }
+            ],
+            headers: {
+              "Authorization" => {
+                description: "Bearer token",
+                required: true
+              }
+            }
+      delete :logout do
+        authenticate!
+
+        token = extract_token
+
+        result = Authentication::LogoutService.call(
+          token: token,
+          user: current_user
+        )
+
+        if result.success?
+          status 200
+          success_response(
+            data: result.data,
+            message: result.message
+          )
+        else
+          api_error(
+            message: result.message || "Logout failed",
+            status: 400,
+            errors: result.errors
+          )
+        end
+      end
+
+      # ============================================
+      # REFRESH TOKEN
+      # ============================================
+      desc "Refresh JWT token",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "Token refreshed" },
+            failure: [
+              { code: 401, message: "Invalid or expired token" }
+            ],
+            headers: {
+              "Authorization" => {
+                description: "Bearer token",
+                required: true
+              }
+            }
+      post :refresh do
+        token = extract_token
+
+        unless token
+          api_error(
+            message: "Token is required",
+            status: 401
+          )
+        end
+
+        result = Authentication::RefreshTokenService.call(token: token)
+
+        if result.success?
+          status 200
+          success_response(
+            data: result.data,
+            message: result.message
+          )
+        else
+          api_error(
+            message: result.message || "Token refresh failed",
+            status: 401,
+            errors: result.errors
+          )
+        end
+      end
+
+      # ============================================
+      # VALIDATE TOKEN
+      # ============================================
+      desc "Validate JWT token",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "Token is valid" },
+            failure: [
+              { code: 401, message: "Invalid token" }
+            ],
+            headers: {
+              "Authorization" => {
+                description: "Bearer token",
+                required: true
+              }
+            }
+      get :validate do
+        authenticate!
+
+        status 200
+        success_response(
+          data: {
+            valid: true,
+            user: {
+              id: current_user.id,
+              email: current_user.email,
+              full_name: current_user.full_name,
+              context: current_context,
+              tenant_id: current_tenant_id
+            },
+            expires_at: Time.at(current_payload[:exp].to_i).iso8601
+          },
+          message: "Token is valid"
+        )
+      end
+
+      # ============================================
+      # ME (Current User Info)
+      # ============================================
+      desc "Get current user information",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "User information retrieved" },
+            failure: [
+              { code: 401, message: "Authentication required" }
+            ],
+            headers: {
+              "Authorization" => {
+                description: "Bearer token",
+                required: true
+              }
+            }
+      get :me do
+        authenticate!
+
+        status 200
+        success_response(
+          data: {
+            id: current_user.id,
+            email: current_user.email,
+            first_name: current_user.first_name,
+            last_name: current_user.last_name,
+            full_name: current_user.full_name,
+            phone: current_user.phone,
+            avatar_url: current_user.avatar_url,
+            email_verified: current_user.email_verified?,
+            context: current_context,
+            tenant_id: current_tenant_id,
+            created_at: current_user.created_at.iso8601,
+            last_login_at: current_user.last_login_at&.iso8601
+          }
+        )
+      end
+
+      # ============================================
+      # CONTEXTOS DISPONIBLES
+      # ============================================
+      desc "Get available contexts for current user",
+            tags: [ "Authentication" ],
+            success: { code: 200 },
+            failure: [ { code: 401, message: "Authentication required" } ],
+            detail: "Returns all contexts (platform and tenants) the user has access to"
+      get :contexts do
+        authenticate!
+
+        contexts = AvailableContextsQuery.new(current_user).call
+
+        success_response(
+          data: {
+            contexts: contexts,
+            total: contexts.size,
+            has_multiple: contexts.size > 1
+          }
+        )
+      end
+
+      # ============================================
+      # CAMBIAR CONTEXTO (SWITCH)
+      # ============================================
+      desc "Switch to a different context",
+            tags: [ "Authentication" ],
+            success: { code: 200, message: "Context switched successfully" },
+            failure: [
+              { code: 401, message: "Authentication required" },
+              { code: 403, message: "Context not available" },
+              { code: 422, message: "Invalid context" }
+            ],
+            detail: "Switch to a different available context without logging out. Old token is revoked and new token is issued.",
+            headers: {
+              "Authorization" => {
+                description: "Current Bearer token",
+                required: true
+              }
+            }
+      params do
+        requires :context_type,
+                  type: String,
+                  values: [ "platform", "tenant" ],
+                  desc: "Type of context to switch to"
+        optional :tenant_id,
+                  type: Integer,
+                  desc: "Tenant ID (required if context_type is tenant)"
+      end
+      post :switch_context do
+        authenticate!
+
+        # Extraer token actual del header
+        current_token = extract_token
+
+        unless current_token
+          error_response(
+            message: "Current token not found",
+            status: 401
+          )
+        end
+
+        # Ejecutar servicio de switch
+        result = Authentication::SwitchContextService.call(
+          current_user: current_user,
+          current_token: current_token,
+          new_context_type: params[:context_type],
+          new_tenant_id: params[:tenant_id]
+        )
+
+        if result.success?
+          status 200
+          success_response(
+            data: result.data,
+            message: result.message
+          )
+        else
+          error_response(
+            message: result.message,
+            errors: result.errors,
+            status: result.meta && result.meta[:available_contexts] ? 403 : 422
+          )
+        end
+      end
     end
 
-    # Documentación con Swagger
-    add_swagger_documentation(
-      api_version: "v1",
-      doc_version: "1.0.0",
-      info: {
-        title: "SaaS Platform API",
-        description: "API Documentation for SaaS Platform with multitenancy support",
-        contact: {
-          name: "API Support",
-          email: ENV.fetch("API_SUPPORT_EMAIL", "support@saasplatform.com"),
-          url: ENV.fetch("API_SUPPORT_URL", "https://saasplatform.com/support")
-        },
-        license: {
-          name: "Proprietary",
-          url: "https://saasplatform.com/license"
-        }
-      },
-      # Configuración de seguridad (JWT Bearer Token)
-      security_definitions: {
-        bearer_token: {
-          type: "apiKey",
-          name: "Authorization",
-          in: "header",
-          description: "JWT Bearer Token. Format: Bearer {token}"
-        }
-      },
-      security: [
-        { bearer_token: [] }
-      ],
-      # Configuración de host y schemes
-      host: ENV.fetch("API_HOST", "localhost:3000"),
-      schemes: Rails.env.production? ? [ "https" ] : [ "http" ],
-      base_path: "/api",
-      mount_path: "/swagger_doc",
-      # Configuración de modelos y arrays
-      array_use_braces: true,
-      # Tags para agrupar endpoints
-      tags: [
-        {
-          name: "Authentication",
-          description: "Login, logout, and token management"
-        },
-        {
-          name: "Platform",
-          description: "Platform administration (SuperAdmin only)"
-        },
-        {
-          name: "Tenant",
-          description: "Tenant-scoped operations"
-        },
-        {
-          name: "Users",
-          description: "User management"
-        },
-        {
-          name: "Roles",
-          description: "Role assignment and management"
-        }
-      ],
-      # Formato de respuestas
-      format: :json,
-      # Ocultar endpoints internos
-      hide_format: true,
-      hide_documentation_path: false,
-      # Configuración adicional
-      produces: [ "application/json" ],
-      consumes: [ "application/json" ]
-    )
-  end
-end
+    private
 
-# app/api/base_api.rb
+    def extract_token
+      auth_header = headers["Authorization"] || headers["authorization"]
+      return nil unless auth_header
 
-# API Base - Configuración global para todas las APIs
-# Todas las APIs heredarán de esta clase para compartir configuración común
-
-class BaseApi < Grape::API
-  # Prefijo base para todas las rutas de la API
-  prefix :api
-
-  # Formato de respuesta por defecto
-  format :json
-  formatter :json, Grape::Formatter::Json
-
-  # Content-type por defecto
-  content_type :json, "application/json"
-
-  # Configuración de errores predeterminados
-  default_format :json
-
-  # Helpers globales disponibles en todos los endpoints
-  helpers do
-    # Respuesta de error consistente para la API
-    # RENOMBRADO de error_response a api_error para evitar conflicto con Grape internals
-    def api_error(message:, status:, errors: nil)
-      response = {
-        success: false,
-        error: {
-          message: message,
-          status: status
-        }
-      }
-
-      response[:error][:details] = errors if errors.present?
-      response[:error][:timestamp] = Time.current.iso8601
-
-      error!(response, status)
-    end
-
-    # Formato de respuesta exitosa consistente
-    def success_response(data: nil, message: nil, meta: nil)
-      response = {
-        success: true,
-        data: data
-      }
-
-      response[:message] = message if message.present?
-      response[:meta] = meta if meta.present?
-      response[:timestamp] = Time.current.iso8601
-
-      response
-    end
-
-    # Método para logging de requests
-    def log_request
-      Rails.logger.info("[API] #{request.request_method} #{request.path}")
-      Rails.logger.debug("[API] Params: #{params.inspect}") if Rails.env.development?
+      match = auth_header.match(/^Bearer\s+(.+)$/i)
+      match ? match[1] : nil
     end
   end
-
-  # ===========================================================================
-  # MANEJO DE ERRORES
-  # ===========================================================================
-  # IMPORTANTE: No usar rescue_from :all porque captura también los errores
-  # intencionales lanzados por error!() causando loops infinitos
-  # ===========================================================================
-
-  # Errores de validación de Grape
-  rescue_from Grape::Exceptions::ValidationErrors do |e|
-    Rails.logger.error("Validation Error: #{e.message}")
-
-    error!({
-      success: false,
-      error: {
-        message: "Validation failed",
-        status: 422,
-        details: e.full_messages,
-        timestamp: Time.current.iso8601
-      }
-    }, 422)
-  end
-
-  # Registro no encontrado
-  rescue_from ActiveRecord::RecordNotFound do |e|
-    Rails.logger.error("Record Not Found: #{e.message}")
-
-    error!({
-      success: false,
-      error: {
-        message: "Resource not found",
-        status: 404,
-        timestamp: Time.current.iso8601
-      }
-    }, 404)
-  end
-
-  # Validaciones de ActiveRecord fallidas
-  rescue_from ActiveRecord::RecordInvalid do |e|
-    Rails.logger.error("Record Invalid: #{e.message}")
-
-    error!({
-      success: false,
-      error: {
-        message: "Validation failed",
-        status: 422,
-        details: e.record.errors.full_messages,
-        timestamp: Time.current.iso8601
-      }
-    }, 422)
-  end
-
-  # Error de autorización (Pundit)
-  rescue_from Pundit::NotAuthorizedError do |e|
-    Rails.logger.error("Authorization Error: #{e.message}")
-
-    error!({
-      success: false,
-      error: {
-        message: "You are not authorized to perform this action",
-        status: 403,
-        timestamp: Time.current.iso8601
-      }
-    }, 403)
-  end
-
-  # Error de tenant no configurado
-  rescue_from ActsAsTenant::Errors::NoTenantSet do |e|
-    Rails.logger.error("Tenant Error: #{e.message}")
-
-    error!({
-      success: false,
-      error: {
-        message: "Tenant context is required for this operation",
-        status: 400,
-        timestamp: Time.current.iso8601
-      }
-    }, 400)
-  end
-
-  # Errores genéricos (último recurso)
-  rescue_from StandardError do |e|
-    Rails.logger.error("Unhandled Error: #{e.class.name} - #{e.message}")
-    Rails.logger.error(e.backtrace.join("\n")) if Rails.env.development?
-
-    error!({
-      success: false,
-      error: {
-        message: Rails.env.production? ? "Internal server error" : e.message,
-        status: 500,
-        details: Rails.env.production? ? nil : [ e.class.name ],
-        timestamp: Time.current.iso8601
-      }
-    }, 500)
-  end
-
-  # Hook antes de cada request
-  before do
-    log_request
-    header "X-API-Version", "v1"
-    header "X-Request-ID", request.env["action_dispatch.request_id"] || SecureRandom.uuid
-  end
-
-  # Hook después de cada request
-  after do
-    # Aquí podríamos agregar métricas, logging adicional, etc.
-  end
-
-  # Montar las versiones de la API
-  mount V1::Base
 end
