@@ -2,6 +2,8 @@
 
 module V1
   module Entities
+    # Entity para scopes de nodos organizacionales
+
     class UserNodeScopeEntity < Grape::Entity
       expose :id, documentation: { type: "Integer" }
       expose :user_id, documentation: { type: "Integer" }
@@ -9,10 +11,29 @@ module V1
       expose :access_type, documentation: { type: "String" }
       expose :include_children, documentation: { type: "Boolean" }
 
-      expose :user, using: UserEntity, if: ->(scope, opts) { opts[:include_user] }
-      expose :organizational_node, using: OrganizationalNodeEntity,
-             if: ->(scope, opts) { opts[:include_node] }
+      # Información del nodo (si se solicita)
+      expose :organizational_node,
+             if: ->(scope, opts) { opts[:include_node] } do |scope|
+        {
+          id: scope.organizational_node.id,
+          name: scope.organizational_node.name,
+          code: scope.organizational_node.code,
+          level_name: scope.organizational_node.level.name,
+          full_path: scope.organizational_node.full_path
+        }
+      end
 
+      # Nodos accesibles (calculado)
+      expose :accessible_nodes_count,
+             if: ->(scope, opts) { opts[:show_accessible_count] } do |scope|
+        scope.accessible_nodes.count
+      end
+
+      # Usuario (opcional)
+      expose :user, using: UserEntity,
+             if: ->(scope, opts) { opts[:include_user] }
+
+      # Timestamps
       with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do
         expose :created_at, format_with: :iso_timestamp
         expose :updated_at, format_with: :iso_timestamp

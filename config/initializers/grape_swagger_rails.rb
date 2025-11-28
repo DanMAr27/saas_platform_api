@@ -11,17 +11,7 @@ GrapeSwaggerRails.options.tap do |config|
   config.app_name = "SaaS Platform API"
 
   # Versión de la API
-  base_url = if Rails.env.production?
-    # En producción usa la variable de entorno
-    ENV.fetch("API_BASE_URL", "https://saas-platform-api-08nh.onrender.com")
-  elsif Rails.env.staging?
-    # En staging (si tienes)
-    ENV.fetch("API_BASE_URL", "https://staging-api.tusitio.com")
-  else
-    # En desarrollo/test usa localhost
-    ENV.fetch("API_BASE_URL", "http://localhost:3000")
-  end
-  config.app_url = base_url
+  config.app_url = ENV.fetch("API_BASE_URL", "http://localhost:3000")
 
   # Configuración de la interfaz Swagger UI
   config.doc_expansion = "list" # Opciones: 'none', 'list', 'full'

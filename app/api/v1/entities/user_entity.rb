@@ -3,11 +3,7 @@
 module V1
   module Entities
     # Entity para serializar usuarios
-    # Controla qué campos se exponen en la API
-    #
-    # Uso:
-    #   present user, with: Entities::UserEntity
-    #   present users, with: Entities::UserEntity, type: :summary
+    # Controla qué campos se exponen en la API según el contexto
 
     class UserEntity < Grape::Entity
       # Campos básicos (siempre expuestos)
@@ -31,8 +27,10 @@ module V1
       end
 
       # Timestamps
-      expose :created_at, format_with: :iso_timestamp, if: ->(user, opts) { opts[:show_details] }
-      expose :last_login_at, format_with: :iso_timestamp, if: ->(user, opts) { opts[:show_details] }
+      expose :created_at, format_with: :iso_timestamp,
+             if: ->(user, opts) { opts[:show_details] }
+      expose :last_login_at, format_with: :iso_timestamp,
+             if: ->(user, opts) { opts[:show_details] }
 
       # Contexto y memberships (solo si está disponible)
       expose :context, if: ->(user, opts) { opts[:context].present? } do |user, opts|
@@ -43,13 +41,7 @@ module V1
         opts[:tenant_id]
       end
 
-      # Roles (se implementará en Fase 3)
-      # expose :roles, if: ->(user, opts) { opts[:show_roles] } do |user, opts|
-      #   user.roles_for_context(opts[:context], opts[:tenant_id])
-      # end
-
       # Resumen (para listas)
-      # Uso: present users, with: UserEntity, type: :summary
       with_options(if: ->(user, opts) { opts[:type] == :summary }) do
         expose :id
         expose :email
@@ -58,7 +50,6 @@ module V1
       end
 
       # Detalles completos
-      # Uso: present user, with: UserEntity, type: :detailed
       with_options(if: ->(user, opts) { opts[:type] == :detailed }) do
         expose :phone
         expose :avatar_url

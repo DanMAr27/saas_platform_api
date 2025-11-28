@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 # Modelo TenantMembership
-# Relaciona un User con un Tenant y define su rol dentro del tenant
-# Un usuario puede pertenecer a múltiples tenants con diferentes roles
+# Relaciona un User con un Tenant y define UN rol específico dentro del tenant
+# IMPORTANTE: Un usuario puede tener MÚLTIPLES membresías (roles) en el mismo tenant
+# Ejemplo: John puede ser 'manager' Y 'driver' en el tenant Acme Corp
+#          Esto se logra creando 2 registros TenantMembership separados
 
 class TenantMembership < ApplicationRecord
   # ============================================
@@ -43,7 +45,8 @@ class TenantMembership < ApplicationRecord
   validates :role_id, presence: true
   validates :status, presence: true, inclusion: { in: STATUSES }
 
-  # Única combinación de user + tenant + role
+  # CLAVE: Un usuario NO puede tener el mismo rol DOS VECES en un tenant
+  # Pero SÍ puede tener DIFERENTES roles en el mismo tenant
   validates :role_id,
             uniqueness: {
               scope: [ :user_id, :tenant_id ],
@@ -52,6 +55,7 @@ class TenantMembership < ApplicationRecord
             }
 
   # Solo puede haber un primary admin por tenant
+  # (independiente de cuántos roles tenga el usuario)
   validates :is_primary_admin,
             uniqueness: {
               scope: :tenant_id,
@@ -64,6 +68,15 @@ class TenantMembership < ApplicationRecord
   validates :invitation_token,
             uniqueness: true,
             allow_nil: true
+
+  # Solo un tenant por defecto por usuario
+  validates :is_default,
+            uniqueness: {
+              scope: :user_id,
+              conditions: -> { where(is_default: true, deleted_at: nil) },
+              message: "user can only have one default tenant"
+            },
+            if: :is_default?
 
   # Validación custom: no se puede cambiar tenant_id
   validate :tenant_id_immutable, on: :update
@@ -224,6 +237,32 @@ class TenantMembership < ApplicationRecord
         .joins(:role)
         .group("roles.name")
         .count
+    end
+
+    # Obtener todos los roles de un usuario en un tenant
+    # Retorna un array de Role objects
+    def roles_for_user_in_tenant(user_id, tenant_id)
+      where(user_id: user_id, tenant_id: tenant_id)
+        .active
+        .includes(:role)
+        .map(&:role)
+    end
+
+    # Verificar si un usuario tiene un rol específico en un tenant
+    def user_has_role?(user_id, tenant_id, role_slug)
+      joins(:role)
+        .where(user_id: user_id, tenant_id: tenant_id)
+        .where(roles: { slug: role_slug })
+        .active
+        .exists?
+    end
+
+    # Obtener slugs de roles de un usuario en un tenant
+    def role_slugs_for_user_in_tenant(user_id, tenant_id)
+      joins(:role)
+        .where(user_id: user_id, tenant_id: tenant_id)
+        .active
+        .pluck("roles.slug")
     end
   end
 

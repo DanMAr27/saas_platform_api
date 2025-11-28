@@ -1,52 +1,99 @@
 # app/policies/tenant_membership_policy.rb
+
+# Política para TenantMembership
+# Define quién puede gestionar membresías
+
 class TenantMembershipPolicy < ApplicationPolicy
+  # ============================================
+  # ACCIONES DE LECTURA
+  # ============================================
+
   def index?
-    # Platform admins ven todas las memberships
-    # Tenant admins/managers ven las de su tenant
-    platform_admin? || tenant_admin_or_manager?
+    super_admin? || tenant_admin_or_manager?
   end
 
   def show?
-    return true if platform_admin?
-    return true if owner? # Ver propia membresía
-
-    # Tenant admin/manager puede ver memberships de su tenant
-    tenant_admin_or_manager? && record.tenant_id == context&.id
+    super_admin? ||
+    owner_of_membership? ||
+    tenant_admin_or_manager?
   end
 
+  # ============================================
+  # ACCIONES DE ESCRITURA
+  # ============================================
+
   def create?
-    # Platform admins pueden crear en cualquier tenant
-    # Tenant admins pueden crear en su tenant
-    platform_admin? || (tenant_admin? && record.tenant_id == context&.id)
+    super_admin? || tenant_admin?
   end
 
   def update?
-    return true if platform_admin?
-    return false if record.is_primary_admin? # No se puede modificar primary admin
+    return true if super_admin?
+    return false if record.is_primary_admin? # No modificar primary admin
+    return false if owner_of_membership? # No auto-modificar
 
-    # Tenant admin puede modificar memberships de su tenant
-    tenant_admin? && record.tenant_id == context&.id
+    tenant_admin?
   end
 
   def destroy?
-    return true if platform_admin?
+    return true if super_admin?
     return false if record.is_primary_admin?
-    return false if record.user_id == user&.id # No auto-eliminarse
+    return false if owner_of_membership?
 
-    tenant_admin? && record.tenant_id == context&.id
+    tenant_admin?
   end
+
+  # ============================================
+  # ACCIONES ESPECÍFICAS
+  # ============================================
+
+  def change_role?
+    return true if super_admin?
+    return false if record.is_primary_admin?
+    return false if owner_of_membership?
+
+    tenant_admin?
+  end
+
+  def suspend?
+    return true if super_admin?
+    return false if record.is_primary_admin?
+    return false if owner_of_membership?
+
+    tenant_admin?
+  end
+
+  def activate?
+    super_admin? || tenant_admin?
+  end
+
+  def set_as_default?
+    super_admin? || owner_of_membership?
+  end
+
+  # ============================================
+  # HELPERS PRIVADOS
+  # ============================================
+
+  private
+
+  def owner_of_membership?
+    record.user_id == user.id
+  end
+
+  # ============================================
+  # SCOPE
+  # ============================================
 
   class Scope < ApplicationPolicy::Scope
     def resolve
-      if platform_admin?
-        # Platform admins ven todas (filtrar por tenant en el endpoint)
+      if user.super_admin?
         scope.all
       elsif context.present?
-        # Tenant users solo ven memberships de su tenant
+        # Ver membresías del tenant actual
         scope.where(tenant_id: context.id)
       else
-        # Sin contexto, solo ver propias memberships
-        scope.where(user_id: user&.id)
+        # Sin contexto, solo sus propias membresías
+        scope.where(user_id: user.id)
       end
     end
   end

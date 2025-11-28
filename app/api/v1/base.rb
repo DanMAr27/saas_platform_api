@@ -6,13 +6,25 @@ module V1
   class Base < Grape::API
     version "v1", using: :path
 
-    # Montar endpoints de autenticación (disponible sin contexto)
+    # ============================================
+    # ENDPOINTS SIN CONTEXTO (públicos/autenticación)
+    # ============================================
     mount V1::AuthenticationApi
-    mount V1::Tenant::ProfileApi
+
+    # ============================================
+    # ENDPOINTS DE PLATAFORMA (SuperAdmin)
+    # ============================================
     mount V1::Platform::TenantsApi
-    mount V1::Tenant::VehiclesApi
+
+    # ============================================
+    # ENDPOINTS DE TENANT (contexto tenant)
+    # ============================================
+    mount V1::Tenant::ProfileApi
     mount V1::Tenant::OrganizationalNodesApi
+    mount V1::Tenant::VehiclesApi
     mount V1::Tenant::ScopesApi
+    mount V1::Tenant::UsersApi
+    mount V1::Tenant::RolesApi
 
 
     # Endpoint de health check (siempre disponible, sin autenticación)
@@ -57,7 +69,7 @@ module V1
         { bearer_token: [] }
       ],
       # Configuración de host y schemes
-      host: ENV.fetch("API_BASE_URL", "localhost:3000"),
+      host: ENV.fetch("API_HOST", "localhost:3000"),
       schemes: Rails.env.production? ? [ "https" ] : [ "http" ],
       base_path: "/api",
       mount_path: "/swagger_doc",
