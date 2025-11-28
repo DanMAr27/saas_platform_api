@@ -25,7 +25,8 @@ if logistics
                               .includes(:user).map(&:user)
 
     nodes = OrganizationalNode.where(tenant: logistics).to_a
-    vehicles = Vehicle.where(tenant: logistics).active.to_a
+    # CORRECCIÓN: No usar scope .active aquí, obtener todos los vehículos
+    vehicles = Vehicle.where(tenant: logistics, status: 'active').to_a
 
     # ============================================
     # NODE SCOPES PARA MANAGERS
@@ -57,67 +58,80 @@ if logistics
 
     puts "\n    Vehicle Scopes for Drivers:"
 
-    drivers.each_with_index do |driver, idx|
-      # Cada driver tiene acceso a 1-3 vehículos
-      assigned_vehicles = vehicles.sample(rand(1..3))
+    # Verificar que hay vehículos disponibles
+    if vehicles.empty?
+      puts "      ⚠ No active vehicles found for drivers"
+    else
+      drivers.each_with_index do |driver, idx|
+        # Cada driver tiene acceso a 1-3 vehículos
+        num_vehicles = [ rand(1..3), vehicles.size ].min
+        assigned_vehicles = vehicles.sample(num_vehicles)
 
-      assigned_vehicles.each do |vehicle|
-        UserVehicleScope.create_with(
-          access_type: 'drive',
-          valid_from: 1.month.ago,
-          valid_until: 6.months.from_now,
-          vehicle: vehicle,
-          tenant: logistics
-        ).find_or_create_by!(
-          user: driver
-        )
+        assigned_vehicles.each do |vehicle|
+          UserVehicleScope.create_with(
+            access_type: 'drive',
+            valid_from: 1.month.ago,
+            valid_until: 6.months.from_now,
+            vehicle: vehicle,
+            tenant: logistics
+          ).find_or_create_by!(
+            user: driver
+          )
+        end
+
+        puts "      ✓ Driver #{idx + 1}: #{assigned_vehicles.count} vehicles (drive access)"
       end
 
-      puts "      ✓ Driver #{idx + 1}: #{assigned_vehicles.count} vehicles (drive access)"
-    end
+      # ============================================
+      # SCOPES TEMPORALES (ALGUNOS DRIVERS)
+      # ============================================
 
-    # ============================================
-    # SCOPES TEMPORALES (ALGUNOS DRIVERS)
-    # ============================================
+      puts "\n    Temporary Vehicle Access:"
 
-    puts "\n    Temporary Vehicle Access:"
+      if drivers.size >= 2
+        temp_drivers = drivers.sample(2)
+        temp_drivers.each_with_index do |driver, idx|
+          # CORRECCIÓN: Asegurarse de que hay vehículos disponibles
+          vehicle = vehicles.sample
 
-    temp_drivers = drivers.sample(2)
-    temp_drivers.each_with_index do |driver, idx|
-      vehicle = vehicles.sample
+          if vehicle
+            UserVehicleScope.create_with(
+              access_type: 'drive',
+              valid_from: Time.current,
+              valid_until: 2.weeks.from_now,
+              vehicle: vehicle,
+              tenant: logistics
+            ).find_or_create_by!(
+              user: driver,
+              vehicle: vehicle
+            )
 
-      UserVehicleScope.create_with(
-        access_type: 'drive',
-        valid_from: Time.current,
-        valid_until: 2.weeks.from_now,
-        vehicle: vehicle,
-        tenant: logistics
-      ).find_or_create_by!(
-        user: driver,
-        vehicle: vehicle
-      )
+            puts "      ✓ Temporary access: Driver -> #{vehicle.fleet_number} (2 weeks)"
+          else
+            puts "      ⚠ No vehicle available for temporary access"
+          end
+        end
+      end
 
-      puts "      ✓ Temporary access: Driver -> #{vehicle.fleet_number} (2 weeks)"
-    end
+      # ============================================
+      # SCOPES EXPIRADOS (PARA TESTING)
+      # ============================================
 
-    # ============================================
-    # SCOPES EXPIRADOS (PARA TESTING)
-    # ============================================
+      if drivers.any? && vehicles.any?
+        expired_driver = drivers.first
+        expired_vehicle = vehicles.first
 
-    if drivers.any?
-      expired_driver = drivers.first
-      expired_vehicle = vehicles.first
+        UserVehicleScope.create!(
+          user: expired_driver,
+          vehicle: expired_vehicle,
+          tenant: logistics,
+          access_type: 'drive',
+          valid_from: 3.months.ago,
+          valid_until: 1.week.ago
+        )
 
-      UserVehicleScope.create!(
-        user: expired_driver,
-        vehicle: expired_vehicle,
-        tenant: logistics,
-        access_type: 'drive',
-        valid_from: 3.months.ago,
-        valid_until: 1.week.ago
-      )
-
-      puts "      ✓ Expired access created (for testing)"
+        puts "      ✓ Expired access created (for testing)"
+      end
     end
 
     # Estadísticas
@@ -143,7 +157,7 @@ if techstart
                                .managers.active
                                .includes(:user).map(&:user)
 
-    vehicles = Vehicle.where(tenant: techstart).to_a
+    vehicles = Vehicle.where(tenant: techstart, status: 'active').to_a
 
     # Manager tiene acceso a todos los vehículos
     if managers.any? && vehicles.any?
@@ -160,6 +174,8 @@ if techstart
       end
 
       puts "    ✓ Manager: Full access to #{vehicles.count} vehicles"
+    elsif vehicles.empty?
+      puts "    ⚠ No active vehicles found"
     end
   end
 end

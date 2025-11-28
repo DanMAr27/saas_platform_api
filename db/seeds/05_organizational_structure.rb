@@ -236,22 +236,51 @@ end
 # ============================================
 
 puts "\n  📊 Organizational Structure Summary:"
-puts "    - Total Levels: #{OrganizationalNodeLevel.count}"
-puts "    - Total Nodes: #{OrganizationalNode.count}"
-puts "    - Total Closures: #{OrganizationalNodeClosure.count}"
+
+# CORRECCIÓN: Usar without_tenant para queries globales
+ActsAsTenant.without_tenant do
+  total_levels = OrganizationalNodeLevel.unscoped.count
+  total_nodes = OrganizationalNode.unscoped.count
+  total_closures = OrganizationalNodeClosure.unscoped.count
+
+  puts "    - Total Levels: #{total_levels}"
+  puts "    - Total Nodes: #{total_nodes}"
+  puts "    - Total Closures: #{total_closures}"
+
+  # Distribución de nodos por nivel
+  puts "\n    - Nodes by Level:"
+  OrganizationalNode.unscoped
+    .joins(:level)
+    .select('organizational_node_levels.name, organizational_node_levels.level_order, COUNT(*) as node_count')
+    .group('organizational_node_levels.name', 'organizational_node_levels.level_order')
+    .order('organizational_node_levels.level_order')
+    .each do |result|
+      puts "      - #{result.name}: #{result.node_count}"
+    end
+end
 
 puts "\n  🏢 Structure by Tenant:"
 active_tenants.each do |tenant|
   ActsAsTenant.with_tenant(tenant) do
     node_count = OrganizationalNode.count
     root_count = OrganizationalNode.roots.count
-    max_depth = OrganizationalNode.maximum(
-      '(SELECT MAX(depth) FROM organizational_node_closures WHERE descendant_id = organizational_nodes.id)'
-    ) || 0
+
+    # Calcular profundidad máxima
+    max_depth = OrganizationalNodeClosure.maximum(:depth) || 0
 
     puts "    #{tenant.name}:"
     puts "      - Nodes: #{node_count}"
     puts "      - Roots: #{root_count}"
     puts "      - Max Depth: #{max_depth}"
+
+    # Mostrar jerarquía simple
+    OrganizationalNode.roots.first(2).each do |root|
+      puts "      - #{root.name}"
+      root.children.limit(3).each do |child|
+        puts "        └─ #{child.name}"
+      end
+    end
   end
 end
+
+puts "\n  ✅ Organizational structure created successfully!"
