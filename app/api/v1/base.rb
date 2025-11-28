@@ -57,7 +57,7 @@ module V1
         { bearer_token: [] }
       ],
       # Configuración de host y schemes
-      host: ENV.fetch("API_HOST", "localhost:3000"),
+      host: ENV.fetch("API_BASE_URL", "localhost:3000"),
       schemes: Rails.env.production? ? [ "https" ] : [ "http" ],
       base_path: "/api",
       mount_path: "/swagger_doc",
