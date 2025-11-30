@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+# app/models/tenant_membreship.rb
 
 # Modelo TenantMembership
 # Relaciona un User con un Tenant y define UN rol específico dentro del tenant

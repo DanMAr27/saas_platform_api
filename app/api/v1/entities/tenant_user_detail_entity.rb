@@ -1,5 +1,5 @@
 # app/api/entities/v1/tenant/tenant_user_detail_entity.rb
-# Entity para DETALLE de usuario (completa, con scopes opcionales)
+# Entity para DETALLE de usuario (completa, con todas sus membresías y scopes)
 
 module V1
   module Entities
@@ -7,90 +7,139 @@ module V1
       # ============================================
       # DATOS DEL USUARIO
       # ============================================
-      expose :id, documentation: { type: "Integer", desc: "User ID" } do |membership|
-        membership.user.id
-      end
+      expose :id, documentation: {
+        type: "Integer",
+        desc: "User ID"
+      }
 
-      expose :email, documentation: { type: "String" } do |membership|
-        membership.user.email
-      end
+      expose :email, documentation: {
+        type: "String"
+      }
 
-      expose :first_name, documentation: { type: "String" } do |membership|
-        membership.user.first_name
-      end
+      expose :first_name, documentation: {
+        type: "String"
+      }
 
-      expose :last_name, documentation: { type: "String" } do |membership|
-        membership.user.last_name
-      end
+      expose :last_name, documentation: {
+        type: "String"
+      }
 
-      expose :full_name, documentation: { type: "String" } do |membership|
-        membership.user.full_name
-      end
+      expose :full_name, documentation: {
+        type: "String"
+      }
 
-      expose :phone, documentation: { type: "String" } do |membership|
-        membership.user.phone
-      end
+      expose :phone, documentation: {
+        type: "String"
+      }
+
+      expose :avatar_url, documentation: {
+        type: "String"
+      }
 
       # ============================================
       # ESTADO DEL USUARIO
       # ============================================
-      expose :active, documentation: { type: "Boolean" } do |membership|
-        membership.user.active?
+      expose :active, documentation: {
+        type: "Boolean",
+        desc: "User account is active (not deleted or locked)"
+      } do |user|
+        user.active?
       end
 
-      expose :locked, documentation: { type: "Boolean" } do |membership|
-        membership.user.locked?
+      expose :locked, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.locked?
       end
 
-      expose :email_verified, documentation: { type: "Boolean" } do |membership|
-        membership.user.email_verified?
-      end
-
-      # ============================================
-      # MEMBERSHIP COMPLETA
-      # ============================================
-      expose :membership, documentation: { type: "Object" } do |membership|
-        {
-          id: membership.id,
-          tenant_id: membership.tenant_id,
-          status: membership.status,
-          is_primary_admin: membership.is_primary_admin?,
-          is_default: membership.is_default?,
-          joined_at: membership.created_at&.iso8601,
-          updated_at: membership.updated_at&.iso8601
-        }
+      expose :email_verified, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.email_verified?
       end
 
       # ============================================
-      # ROL COMPLETO
+      # TODAS LAS MEMBRESÍAS EN EL TENANT
       # ============================================
-      expose :role, documentation: { type: "Object" } do |membership|
-        role = membership.role
+      expose :memberships, documentation: {
+        type: "Array",
+        desc: "All roles/memberships for this user in the tenant"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
 
-        {
-          id: role.id,
-          slug: role.slug,
-          name: role.name,
-          priority: role.priority
-        }
+        memberships = user.tenant_memberships
+                          .kept
+                          .where(tenant_id: tenant_id)
+                          .includes(:role)
+                          .order("roles.priority ASC")
+
+        memberships.map do |membership|
+          {
+            id: membership.id,
+            role: {
+              id: membership.role.id,
+              slug: membership.role.slug,
+              name: membership.role.name,
+              priority: membership.role.priority
+            },
+            status: membership.status,
+            is_primary_admin: membership.is_primary_admin?,
+            is_default: membership.is_default?,
+            joined_at: membership.created_at&.iso8601,
+            updated_at: membership.updated_at&.iso8601,
+            invitation_pending: membership.invitation_pending?,
+            invitation_expired: membership.invitation_expired?
+          }
+        end
+      end
+
+      # ============================================
+      # ROL PRINCIPAL (para compatibilidad)
+      # ============================================
+      expose :primary_role, documentation: {
+        type: "Object",
+        desc: "Primary role (highest priority)"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        primary_membership = user.tenant_memberships
+                                 .kept
+                                 .where(tenant_id: tenant_id)
+                                 .includes(:role)
+                                 .order("roles.priority ASC")
+                                 .first
+
+        if primary_membership
+          {
+            id: primary_membership.role.id,
+            slug: primary_membership.role.slug,
+            name: primary_membership.role.name,
+            priority: primary_membership.role.priority
+          }
+        else
+          nil
+        end
       end
 
       # ============================================
       # SCOPES (NODOS Y VEHÍCULOS)
       # ============================================
       expose :scopes,
-             if: ->(membership, options) { options[:include_scopes] },
-             documentation: { type: "Object" } do |membership, options|
-        tenant_id = options[:tenant_id] || membership.tenant_id
-        user_id = membership.user_id
+             if: ->(user, options) { options[:include_scopes] },
+             documentation: {
+               type: "Object",
+               desc: "Access scopes (nodes and vehicles)"
+             } do |user, options|
+        tenant_id = options[:tenant_id]
 
+        # Obtener todos los scopes del usuario en este tenant
         node_scopes = UserNodeScope
-                        .where(user_id: user_id, tenant_id: tenant_id)
+                        .where(user_id: user.id, tenant_id: tenant_id)
                         .kept
                         .includes(:organizational_node)
 
         vehicle_scopes = UserVehicleScope
-                          .where(user_id: user_id, tenant_id: tenant_id)
+                          .where(user_id: user.id, tenant_id: tenant_id)
                           .kept
                           .includes(:vehicle)
 
@@ -126,22 +175,18 @@ module V1
           summary: {
             total_nodes: node_scopes.count,
             total_vehicles: vehicle_scopes.count,
-            active_vehicles: vehicle_scopes.select(&:active?).count,
+            active_vehicles: vehicle_scopes.count(&:active?),
             expired_vehicles: vehicle_scopes.reject(&:active?).count
           }
         }
       end
 
       # ============================================
-      # INFORMACIÓN ADICIONAL
+      # INFORMACIÓN DE INVITACIÓN
       # ============================================
-      expose :last_sign_in_at, documentation: { type: "DateTime" } do |membership|
-        membership.user.last_sign_in_at&.iso8601
-      end
-
-      expose :invitation_status, documentation: { type: "Object" } do |membership|
-        user = membership.user
-
+      expose :invitation_status, documentation: {
+        type: "Object"
+      } do |user|
         {
           pending: user.invitation_pending?,
           expired: user.invitation_expired?,
@@ -151,14 +196,41 @@ module V1
       end
 
       # ============================================
-      # TIMESTAMPS
+      # ÚLTIMO ACCESO
       # ============================================
-      expose :created_at, documentation: { type: "DateTime" } do |membership|
-        membership.created_at&.iso8601
+      expose :last_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.last_sign_in_at&.iso8601
       end
 
-      expose :updated_at, documentation: { type: "DateTime" } do |membership|
-        membership.updated_at&.iso8601
+      expose :last_sign_in_ip, documentation: {
+        type: "String"
+      }
+
+      expose :current_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.current_sign_in_at&.iso8601
+      end
+
+      expose :sign_in_count, documentation: {
+        type: "Integer"
+      }
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      expose :created_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.created_at&.iso8601
+      end
+
+      expose :updated_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.updated_at&.iso8601
       end
     end
   end

@@ -1,8 +1,6 @@
-# frozen_string_literal: true
+# app/services/authentication/jwt_encoder.rb
 
 module Authentication
-  # Servicio para codificar tokens JWT
-  # Genera tokens con información de usuario y contexto (platform/tenant)
   class JwtEncoder
     include ServiceResultHelper
 
@@ -10,56 +8,47 @@ module Authentication
     DEFAULT_EXPIRATION = 24.hours.to_i
 
     class << self
-      # Genera JWT para un usuario en un contexto específico
-      # @param user [User]
-      # @param context [String] 'platform', 'tenant', 'external_org'
-      # @param tenant_id [Integer, nil] solo para contextos tenant
-      # @param expiration [Integer, nil] segundos
-      def encode(user:, context:, tenant_id: nil, expiration: nil)
-        exp = expiration || DEFAULT_EXPIRATION
-        jti = generate_jti
-        payload = build_payload(user: user, context: context, tenant_id: tenant_id, jti: jti, exp: exp)
-        JWT.encode(payload, secret_key, ALGORITHM)
-      end
-
-      # Genera JWT y retorna metadata
-      def encode_with_metadata(user:, context:, tenant_id: nil, expiration: nil)
+      # 🔥 Método simplificado - Token ligero
+      def encode_with_metadata(user:, context:, tenant_id: nil, membership_id: nil, expiration: nil)
         exp = expiration || DEFAULT_EXPIRATION
         issued_at = Time.current
         expires_at = issued_at + exp
+        jti = generate_jti
 
-        token = encode(user: user, context: context, tenant_id: tenant_id, expiration: exp)
+        # 🔥 Payload ligero
+        payload = {
+          jti: jti,
+          sub: user.id.to_s,
+          iat: issued_at.to_i,
+          exp: expires_at.to_i,
+          iss: jwt_issuer,
+          aud: jwt_audience,
 
+          # Datos básicos del usuario
+          email: user.email,
+          name: user.full_name,
+          verified: user.email_verified?,
+
+          # Contexto
+          context: context,
+          tenant_id: tenant_id,           # nil para platform
+          membership_id: membership_id    # 🔥 NUEVO: Identificar membresía activa
+        }
+
+        # Codificar token
+        token = JWT.encode(payload, secret_key, ALGORITHM)
+
+        # Retornar con metadata
         {
           token: token,
+          token_type: "Bearer",
           expires_at: expires_at.iso8601,
-          issued_at: issued_at.iso8601,
           expires_in: exp,
-          token_type: "Bearer"
+          issued_at: issued_at.iso8601
         }
       end
 
       private
-
-      def build_payload(user:, context:, tenant_id:, jti:, exp:)
-        issued_at = Time.current.to_i
-        payload = {
-          jti: jti,
-          sub: user.id.to_s,
-          iat: issued_at,
-          exp: issued_at + exp,
-          iss: jwt_issuer,
-          aud: jwt_audience,
-          email: user.email,
-          name: user.full_name,
-          verified: user.email_verified?,
-          context: context
-        }
-
-        # Agregar tenant_id solo si aplica
-        payload[:tenant_id] = tenant_id if context == "tenant" && tenant_id.present?
-        payload
-      end
 
       def generate_jti
         SecureRandom.uuid

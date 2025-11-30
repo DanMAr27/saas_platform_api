@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+# app/models/user.rb
 
 # Modelo de Usuario - Identidad base del sistema
 # Gestiona TODOS los usuarios: platform admins, tenant users, etc.

@@ -1,7 +1,5 @@
-# frozen_string_literal: true
-
 # db/seeds/04_tenants.rb
-# Tenants con diferentes estados, planes y membresías
+# Tenants con diferentes estados, planes y membresías con roles correctamente asignados
 
 puts "\n🏢 Creating Tenants..."
 
@@ -10,11 +8,28 @@ admin_role = Role.find_by!(slug: 'tenant_admin')
 manager_role = Role.find_by!(slug: 'tenant_manager')
 driver_role = Role.find_by!(slug: 'tenant_driver')
 viewer_role = Role.find_by(slug: 'tenant_viewer')
+coordinator_role = Role.find_by(slug: 'fleet_coordinator')
 
 # Usuarios existentes para agregar a tenants
 john = User.find_by(email: 'john.doe@example.com')
 jane = User.find_by(email: 'jane.smith@example.com')
 carlos = User.find_by(email: 'carlos.garcia@example.com')
+
+# ============================================
+# HELPER PARA CREAR MEMBRESÍAS
+# ============================================
+
+def create_tenant_membership(user, tenant, role, options = {})
+  defaults = {
+    status: 'active',
+    created_by: options[:created_by],
+    is_primary_admin: options[:is_primary_admin] || false,
+    is_default: options[:is_default] || false
+  }
+
+  TenantMembership.create_with(defaults.merge(role: role))
+    .find_or_create_by!(user: user, tenant: tenant)
+end
 
 # ============================================
 # TENANT 1: TRIAL (Acme Corp)
@@ -54,7 +69,7 @@ acme = Tenant.create_with(
 
 puts "    ✓ Acme Corporation (TRIAL - expires in 20 days)"
 
-# Admin de Acme
+# ============ ADMIN PRINCIPAL (Acme) ============
 acme_admin = User.create_with(
   first_name: 'María',
   last_name: 'García',
@@ -64,18 +79,15 @@ acme_admin = User.create_with(
   email_verified_at: Time.current
 ).find_or_create_by!(email: 'maria.garcia@acme.com')
 
-TenantMembership.create_with(
-  tenant: acme,
-  role: admin_role,
-  status: 'active',
+create_tenant_membership(
+  acme_admin, acme, admin_role,
+  created_by: acme_admin.id,
   is_primary_admin: true,
-  is_default: true,
-  created_by: acme_admin.id
-).find_or_create_by!(user: acme_admin)
-
+  is_default: true
+)
 puts "      Admin: maria.garcia@acme.com"
 
-# Manager de Acme
+# ============ MANAGER (Acme) ============
 acme_manager = User.create_with(
   first_name: 'Carlos',
   last_name: 'López',
@@ -85,16 +97,13 @@ acme_manager = User.create_with(
   email_verified_at: Time.current
 ).find_or_create_by!(email: 'carlos.lopez@acme.com')
 
-TenantMembership.create_with(
-  tenant: acme,
-  role: manager_role,
-  status: 'active',
+create_tenant_membership(
+  acme_manager, acme, manager_role,
   created_by: acme_admin.id
-).find_or_create_by!(user: acme_manager)
-
+)
 puts "      Manager: carlos.lopez@acme.com"
 
-# Driver de Acme (invitado, no aceptado)
+# ============ DRIVER (Acme - invitado) ============
 acme_driver = User.create_with(
   first_name: 'Ana',
   last_name: 'Rodríguez',
@@ -111,7 +120,6 @@ TenantMembership.create_with(
   invitation_sent_at: 2.days.ago,
   created_by: acme_admin.id
 ).find_or_create_by!(user: acme_driver)
-
 puts "      Driver: ana.rodriguez@acme.com (INVITED - pending)"
 
 # ============================================
@@ -148,7 +156,7 @@ techstart = Tenant.create_with(
 
 puts "    ✓ Tech Startup Inc (ACTIVE - Basic Plan)"
 
-# Admin
+# ============ ADMIN (Tech Startup) ============
 tech_admin = User.create_with(
   first_name: 'Joan',
   last_name: 'Martínez',
@@ -158,26 +166,45 @@ tech_admin = User.create_with(
   email_verified_at: 3.months.ago
 ).find_or_create_by!(email: 'joan.martinez@techstartup.com')
 
-TenantMembership.create_with(
-  tenant: techstart,
-  role: admin_role,
-  status: 'active',
+create_tenant_membership(
+  tech_admin, techstart, admin_role,
+  created_by: tech_admin.id,
   is_primary_admin: true,
   is_default: true
-).find_or_create_by!(user: tech_admin)
-
-# Agregar John como manager
-if john
-  TenantMembership.create_with(
-    tenant: techstart,
-    role: manager_role,
-    status: 'active',
-    created_by: tech_admin.id
-  ).find_or_create_by!(user: john)
-  puts "      Manager: john.doe@example.com"
-end
-
+)
 puts "      Admin: joan.martinez@techstartup.com"
+
+# ============ MANAGER (Tech Startup) ============
+tech_manager = User.create_with(
+  first_name: 'Anna',
+  last_name: 'Puig',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600222223',
+  email_verified_at: 2.months.ago
+).find_or_create_by!(email: 'anna.puig@techstartup.com')
+
+create_tenant_membership(
+  tech_manager, techstart, manager_role,
+  created_by: tech_admin.id
+)
+puts "      Manager: anna.puig@techstartup.com"
+
+# ============ DRIVER (Tech Startup) ============
+tech_driver = User.create_with(
+  first_name: 'Sergi',
+  last_name: 'Rovira',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600222224',
+  email_verified_at: 1.month.ago
+).find_or_create_by!(email: 'sergi.rovira@techstartup.com')
+
+create_tenant_membership(
+  tech_driver, techstart, driver_role,
+  created_by: tech_admin.id
+)
+puts "      Driver: sergi.rovira@techstartup.com"
 
 # ============================================
 # TENANT 3: ACTIVE - PROFESSIONAL PLAN
@@ -212,7 +239,7 @@ logistics = Tenant.create_with(
 
 puts "    ✓ Global Logistics Pro (ACTIVE - Professional Plan)"
 
-# Team completo
+# ============ ADMIN PRINCIPAL (Logistics) ============
 logistics_admin = User.create_with(
   first_name: 'Patricia',
   last_name: 'Torres',
@@ -222,37 +249,51 @@ logistics_admin = User.create_with(
   email_verified_at: 1.year.ago
 ).find_or_create_by!(email: 'patricia.torres@globallogistics.com')
 
-TenantMembership.create_with(
-  tenant: logistics,
-  role: admin_role,
-  status: 'active',
+create_tenant_membership(
+  logistics_admin, logistics, admin_role,
+  created_by: logistics_admin.id,
   is_primary_admin: true,
   is_default: true
-).find_or_create_by!(user: logistics_admin)
+)
+puts "      Admin: patricia.torres@globallogistics.com"
 
-# 3 Managers
-[ 'david.moreno', 'laura.sanchez', 'miguel.torres' ].each_with_index do |username, index|
-  manager = User.create_with(
-    first_name: username.split('.').first.capitalize,
-    last_name: username.split('.').last.capitalize,
+# ============ FLEET COORDINATOR (Logistics) ============
+if coordinator_role
+  fleet_coord = User.create_with(
+    first_name: 'Jorge',
+    last_name: 'Ruiz',
     password: 'Password123!',
     password_confirmation: 'Password123!',
-    phone: "+3460033#{3340 + index}",
-    email_verified_at: rand(1..11).months.ago
-  ).find_or_create_by!(email: "#{username}@globallogistics.com")
+    phone: '+34600333334',
+    email_verified_at: 10.months.ago
+  ).find_or_create_by!(email: 'jorge.ruiz@globallogistics.com')
 
-  TenantMembership.create_with(
-    tenant: logistics,
-    role: manager_role,
-    status: 'active',
+  create_tenant_membership(
+    fleet_coord, logistics, coordinator_role,
     created_by: logistics_admin.id
-  ).find_or_create_by!(user: manager)
+  )
+  puts "      Fleet Coordinator: jorge.ruiz@globallogistics.com"
 end
 
-puts "      Admin: patricia.torres@globallogistics.com"
+# ============ MANAGERS - 3 MANAGERS CON DIFERENTES REGIONES ============
+3.times do |i|
+  manager = User.create_with(
+    first_name: %w[David Laura Miguel][i],
+    last_name: %w[Moreno Sánchez Torres][i],
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3460033#{3340 + i}",
+    email_verified_at: rand(1..11).months.ago
+  ).find_or_create_by!(email: "#{%w[david.moreno laura.sanchez miguel.torres][i]}@globallogistics.com")
+
+  create_tenant_membership(
+    manager, logistics, manager_role,
+    created_by: logistics_admin.id
+  )
+end
 puts "      Managers: 3 active"
 
-# 5 Drivers
+# ============ DRIVERS - 5 DRIVERS CON ACCESO A VEHÍCULOS ============
 5.times do |i|
   driver = User.create_with(
     first_name: "Driver",
@@ -263,15 +304,71 @@ puts "      Managers: 3 active"
     email_verified_at: rand(1..6).months.ago
   ).find_or_create_by!(email: "driver#{i + 1}@globallogistics.com")
 
-  TenantMembership.create_with(
-    tenant: logistics,
-    role: driver_role,
-    status: 'active',
+  create_tenant_membership(
+    driver, logistics, driver_role,
     created_by: logistics_admin.id
-  ).find_or_create_by!(user: driver)
+  )
+end
+puts "      Drivers: 5 active"
+
+# ============ VIEWER - READONLY ACCESS ============
+if viewer_role
+  viewer = User.create_with(
+    first_name: 'Monitor',
+    last_name: 'Analytics',
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: '+34600333366',
+    email_verified_at: 6.months.ago
+  ).find_or_create_by!(email: 'monitor.analytics@globallogistics.com')
+
+  create_tenant_membership(
+    viewer, logistics, viewer_role,
+    created_by: logistics_admin.id
+  )
+  puts "      Viewer: monitor.analytics@globallogistics.com (read-only)"
 end
 
-puts "      Drivers: 5 active"
+# ============================================
+# USUARIO CON MÚLTIPLES MEMBRESÍAS (CROSS-TENANT)
+# ============================================
+
+puts "\n  Creating User with Multiple Memberships:"
+
+# Crear usuario que participa en múltiples tenants
+multi_tenant_user = User.create_with(
+  first_name: 'Operativo',
+  last_name: 'Universal',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600999999',
+  email_verified_at: 5.months.ago
+).find_or_create_by!(email: 'operativo.universal@example.com')
+
+# Manager en Acme
+create_tenant_membership(
+  multi_tenant_user, acme, manager_role,
+  created_by: acme_admin.id
+)
+
+# Driver en Tech Startup
+create_tenant_membership(
+  multi_tenant_user, techstart, driver_role,
+  created_by: tech_admin.id
+)
+
+# Viewer en Logistics
+if viewer_role
+  create_tenant_membership(
+    multi_tenant_user, logistics, viewer_role,
+    created_by: logistics_admin.id
+  )
+end
+
+puts "    ✓ operativo.universal@example.com"
+puts "      - Manager @ Acme Corporation"
+puts "      - Driver @ Tech Startup Inc"
+puts "      - Viewer @ Global Logistics Pro"
 
 # ============================================
 # TENANT 4: SUSPENDED
@@ -310,7 +407,8 @@ TenantMembership.create_with(
   tenant: suspended,
   role: admin_role,
   status: 'suspended',
-  is_primary_admin: true
+  is_primary_admin: true,
+  created_by: suspended_admin.id
 ).find_or_create_by!(user: suspended_admin)
 
 puts "    ✓ Suspended Company Ltd (SUSPENDED - payment issue)"
@@ -377,6 +475,9 @@ enterprise = Tenant.create_with(
   }
 ).find_or_create_by!(slug: 'enterprise-mega')
 
+puts "    ✓ Enterprise Solutions Mega Corp (ACTIVE - Enterprise Plan)"
+
+# ============ ADMIN (Enterprise) ============
 enterprise_admin = User.create_with(
   first_name: 'Enterprise',
   last_name: 'Admin',
@@ -386,15 +487,49 @@ enterprise_admin = User.create_with(
   email_verified_at: 2.years.ago
 ).find_or_create_by!(email: 'admin@enterprise.com')
 
-TenantMembership.create_with(
-  tenant: enterprise,
-  role: admin_role,
-  status: 'active',
+create_tenant_membership(
+  enterprise_admin, enterprise, admin_role,
+  created_by: enterprise_admin.id,
   is_primary_admin: true,
   is_default: true
-).find_or_create_by!(user: enterprise_admin)
+)
+puts "      Admin: admin@enterprise.com"
 
-puts "    ✓ Enterprise Solutions Mega Corp (ACTIVE - Enterprise Plan)"
+# ============ MANAGERS (Enterprise - 5 managers) ============
+5.times do |i|
+  manager = User.create_with(
+    first_name: "Regional",
+    last_name: "Manager #{i + 1}",
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3490044#{4440 + i}",
+    email_verified_at: rand(1..24).months.ago
+  ).find_or_create_by!(email: "manager#{i + 1}@enterprise.com")
+
+  create_tenant_membership(
+    manager, enterprise, manager_role,
+    created_by: enterprise_admin.id
+  )
+end
+puts "      Managers: 5 regional managers"
+
+# ============ DRIVERS (Enterprise - 10 drivers) ============
+10.times do |i|
+  driver = User.create_with(
+    first_name: "Enterprise",
+    last_name: "Driver #{i + 1}",
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3490044#{4450 + i}",
+    email_verified_at: rand(1..12).months.ago
+  ).find_or_create_by!(email: "enterprise_driver#{i + 1}@enterprise.com")
+
+  create_tenant_membership(
+    driver, enterprise, driver_role,
+    created_by: enterprise_admin.id
+  )
+end
+puts "      Drivers: 10 active"
 
 # ============================================
 # RESUMEN
@@ -418,16 +553,27 @@ puts "    - Total Memberships: #{TenantMembership.count}"
 puts "    - Active: #{TenantMembership.active.count}"
 puts "    - Invited: #{TenantMembership.invited.count}"
 puts "    - Suspended: #{TenantMembership.suspended.count}"
-puts "    - By Role:"
-puts "      - Admins: #{TenantMembership.admins.count}"
-puts "      - Managers: #{TenantMembership.managers.count}"
-puts "      - Drivers: #{TenantMembership.drivers.count}"
+
+puts "\n  👤 Users with Multiple Memberships:"
+User.joins(:tenant_memberships)
+  .select('users.*, COUNT(tenant_memberships.id) as membership_count')
+  .group('users.id')
+  .having('COUNT(tenant_memberships.id) > 1')
+  .order('membership_count DESC')
+  .each do |user|
+    puts "    #{user.email}: #{user.membership_count} tenants"
+  end
 
 puts "\n  🏢 Tenant Access Info:"
 Tenant.active.each do |tenant|
   primary_admin = tenant.primary_admin
   puts "    #{tenant.name} (#{tenant.plan})"
   puts "      Admin: #{primary_admin&.email || 'N/A'}"
-  puts "      Users: #{tenant.active_memberships.count}/#{tenant.max_users}"
-  puts "      Status: #{tenant.status.upcase}"
+  puts "      Members: #{tenant.active_memberships.count}/#{tenant.max_users}"
+  puts "      - Admins: #{tenant.tenant_memberships.where(role: admin_role).active.count}"
+  puts "      - Managers: #{tenant.tenant_memberships.where(role: manager_role).active.count}"
+  puts "      - Drivers: #{tenant.tenant_memberships.where(role: driver_role).active.count}"
+  if viewer_role
+    puts "      - Viewers: #{tenant.tenant_memberships.where(role: viewer_role).active.count}"
+  end
 end

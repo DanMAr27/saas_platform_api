@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+# app/services/authentication/login_step1_service.rb
 
 module Authentication
   class LoginStep1Service
@@ -40,26 +40,16 @@ module Authentication
       end
 
       # Validar estado del usuario
-      Rails.logger.info "[LoginStep1] Validating user state..."
-      Rails.logger.info "[LoginStep1]   - deleted?: #{user.deleted?}"
-      Rails.logger.info "[LoginStep1]   - locked?: #{user.locked?}"
-      Rails.logger.info "[LoginStep1]   - email_verified?: #{user.email_verified?}"
-
       validation_result = validate_user_state(user)
-      if validation_result.failure?
-        Rails.logger.info "[LoginStep1] ❌ User state validation failed"
-        return validation_result
-      end
+      return validation_result if validation_result.failure?
 
-      Rails.logger.info "[LoginStep1] ✓ User state valid"
-
-      # Obtener contextos disponibles
+      # 🔥 Obtener contextos disponibles
       contexts_query = AvailableContextsQuery.new(user)
       available_contexts = contexts_query.call
 
       Rails.logger.info "[LoginStep1] Contexts found: #{available_contexts.size}"
       available_contexts.each_with_index do |ctx, i|
-        Rails.logger.info "[LoginStep1]   #{i+1}. #{ctx[:type]} - #{ctx[:display_name]}"
+        Rails.logger.info "[LoginStep1]   #{i+1}. #{ctx[:id]} - #{ctx[:display_name]}"
       end
 
       # Verificar que tenga al menos un contexto
@@ -83,7 +73,7 @@ module Authentication
 
       Rails.logger.info "[LoginStep1] ✓ Login successful!"
 
-      # Retornar resultado
+      # 🔥 Retornar resultado
       success(
         data: {
           requires_context_selection: requires_selection,

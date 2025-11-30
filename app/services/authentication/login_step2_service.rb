@@ -1,25 +1,14 @@
-# frozen_string_literal: true
+# app/services/authentication/login_step2_service.rb
 
 module Authentication
-  # Servicio de Login - Paso 2: Selección de Contexto
-  # Recibe session_token del paso 1 y genera JWT con contexto específico
-  #
-  # Uso:
-  #   result = LoginStep2Service.call(
-  #     session_token: 'token_from_step1',
-  #     context_type: 'tenant',
-  #     tenant_id: 1  # Solo si context_type es 'tenant'
-  #   )
-
   class LoginStep2Service
     include ServiceResultHelper
 
-    attr_reader :session_token, :context_type, :tenant_id
+    attr_reader :session_token, :context_id
 
-    def initialize(session_token:, context_type:, tenant_id: nil)
+    def initialize(session_token:, context_id:)
       @session_token = session_token
-      @context_type = context_type
-      @tenant_id = tenant_id
+      @context_id = context_id
     end
 
     def self.call(**args)
@@ -29,7 +18,7 @@ module Authentication
     def call
       # Validar parámetros
       return failure(errors: "Session token is required") if session_token.blank?
-      return failure(errors: "Context type is required") if context_type.blank?
+      return failure(errors: "Context ID is required") if context_id.blank?
 
       # Validar session token
       user_result = validate_session_token
@@ -37,27 +26,30 @@ module Authentication
 
       user = user_result.data
 
-      # Validar contexto seleccionado
-      context_result = validate_context_selection(user)
+      # 🔥 Buscar contexto seleccionado por ID
+      context_result = find_selected_context(user)
       return context_result if context_result.failure?
 
-      context_data = context_result.data
+      selected_context = context_result.data
 
-      # Generar JWT con el contexto seleccionado
+      # 🔥 Generar JWT con membership_id incluido
       token_data = JwtEncoder.encode_with_metadata(
         user: user,
-        context: context_data[:context],
-        tenant_id: context_data[:tenant_id]
+        context: selected_context[:context],
+        tenant_id: selected_context[:tenant_id],
+        membership_id: selected_context[:membership_id]
       )
 
-      # Retornar resultado exitoso
+      # 🔥 Construir respuesta completa
       success(
         data: {
           token: token_data[:token],
           token_type: token_data[:token_type],
           expires_at: token_data[:expires_at],
           expires_in: token_data[:expires_in],
-          user: user_data(user, context_data)
+          user: user_data(user),
+          active_context: build_active_context(selected_context),
+          available_contexts: build_available_contexts(user, selected_context[:id])
         },
         message: "Context selected successfully"
       )
@@ -96,49 +88,25 @@ module Authentication
       end
     end
 
-    # Validar que el contexto seleccionado sea válido para el usuario
-    def validate_context_selection(user)
-      # Obtener contextos disponibles
+    # 🔥 Buscar contexto seleccionado por ID
+    def find_selected_context(user)
+      # Obtener TODOS los contextos disponibles
       available_contexts = AvailableContextsQuery.new(user).call
 
-      # Buscar el contexto seleccionado
-      selected_context = case context_type
-      when "platform"
-                          find_platform_context(available_contexts)
-      when "tenant"
-                          find_tenant_context(available_contexts)
-      else
-                          return failure(errors: "Invalid context type: #{context_type}")
+      # Buscar por context_id
+      selected = available_contexts.find { |ctx| ctx[:id] == context_id }
+
+      unless selected
+        return failure(
+          errors: "Context not available",
+          meta: {
+            available_context_ids: available_contexts.map { |c| c[:id] },
+            message: "Please select from available contexts"
+          }
+        )
       end
 
-      unless selected_context
-        return failure(errors: "Selected context is not available for this user")
-      end
-
-      # Retornar datos del contexto
-      success(
-        data: {
-          context: selected_context[:context],
-          tenant_id: selected_context[:tenant_id],
-          role: selected_context[:role],
-          role_name: selected_context[:role_name],
-          full_context: selected_context
-        }
-      )
-    end
-
-    # Encontrar contexto platform
-    def find_platform_context(available_contexts)
-      available_contexts.find { |ctx| ctx[:type] == "platform" }
-    end
-
-    # Encontrar contexto tenant específico
-    def find_tenant_context(available_contexts)
-      return nil if tenant_id.blank?
-
-      available_contexts.find do |ctx|
-        ctx[:type] == "tenant" && ctx[:tenant_id] == tenant_id.to_i
-      end
+      success(data: selected)
     end
 
     # Secret para session tokens
@@ -147,8 +115,8 @@ module Authentication
         ENV.fetch("SESSION_SECRET_KEY", Rails.application.credentials.secret_key_base)
     end
 
-    # Construir datos del usuario para respuesta
-    def user_data(user, context_data)
+    # 🔥 Construir datos del usuario
+    def user_data(user)
       {
         id: user.id,
         email: user.email,
@@ -156,12 +124,53 @@ module Authentication
         last_name: user.last_name,
         full_name: user.full_name,
         avatar_url: user.avatar_url,
-        email_verified: user.email_verified?,
-        context: context_data[:context],
-        tenant_id: context_data[:tenant_id],
-        role: context_data[:role],
-        role_name: context_data[:role_name]
+        email_verified: user.email_verified?
       }
+    end
+
+    # 🔥 Construir contexto activo con toda la información
+    def build_active_context(context)
+      {
+        id: context[:id],
+        type: context[:type],
+        display_name: context[:display_name],
+
+        # IDs
+        membership_id: context[:membership_id],
+        tenant_id: context[:tenant_id],
+
+        # Info del tenant (si aplica)
+        tenant_name: context[:tenant_name],
+        tenant_slug: context[:tenant_slug],
+        tenant_status: context[:tenant_status],
+        tenant_logo: context[:tenant_logo],
+
+        # Info del rol
+        role: context[:role],
+        role_name: context[:role_name],
+
+        # Flags
+        is_primary_admin: context[:is_primary_admin],
+        is_default: context[:is_default],
+
+        # Metadata del tenant
+        tenant_trial: context[:tenant_trial],
+        tenant_trial_days_remaining: context[:tenant_trial_days_remaining]
+      }.compact # Elimina claves con nil
+    end
+
+    # 🔥 Lista de contextos disponibles (para switcher)
+    def build_available_contexts(user, current_context_id)
+      AvailableContextsQuery.new(user).call.map do |ctx|
+        {
+          id: ctx[:id],
+          type: ctx[:type],
+          display_name: ctx[:display_name],
+          tenant_name: ctx[:tenant_name],
+          role_name: ctx[:role_name],
+          is_active: ctx[:id] == current_context_id
+        }
+      end
     end
   end
 end

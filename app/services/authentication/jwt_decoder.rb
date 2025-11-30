@@ -1,8 +1,6 @@
-# frozen_string_literal: true
+# app/services/authentication/jwt_decoder.rb
 
 module Authentication
-  # Servicio para decodificar y validar tokens JWT
-  # Considera multi-contexto y usuarios sin tenant (platform/support)
   class JwtDecoder
     include ServiceResultHelper
 
@@ -49,24 +47,32 @@ module Authentication
         }
       )
 
+      # Verificar si está revocado
       if token_revoked?(payload)
         return failure(errors: "Token has been revoked")
       end
 
+      # Buscar usuario
       user = User.find_by(id: payload["sub"])
       unless user&.active?
         return failure(errors: "User not found or inactive")
       end
 
-      # Validar tenant_id solo si el contexto es tenant
-      if payload["context"] == "tenant" && payload["tenant_id"].present?
-        tenant_membership = TenantMembership.active.find_by(user_id: user.id, tenant_id: payload["tenant_id"])
-        unless tenant_membership
-          return failure(errors: "Access denied to this tenant")
+      # 🔥 Validar membership_id si el contexto es tenant
+      if payload["context"] == "tenant" && payload["membership_id"].present?
+        membership = TenantMembership.active.find_by(
+          id: payload["membership_id"],
+          user_id: user.id,
+          tenant_id: payload["tenant_id"]
+        )
+
+        unless membership
+          return failure(errors: "Access denied: membership not found or inactive")
         end
       end
 
       success(data: payload.with_indifferent_access, meta: { header: header, user: user })
+
     rescue JWT::ExpiredSignature
       failure(errors: "Token has expired")
     rescue JWT::InvalidIssuerError
@@ -100,6 +106,7 @@ module Authentication
         email: decoded[:payload][:email],
         context: decoded[:payload][:context],
         tenant_id: decoded[:payload][:tenant_id],
+        membership_id: decoded[:payload][:membership_id], # 🔥 NUEVO
         expires_at: Time.at(decoded[:payload][:exp].to_i),
         issued_at: Time.at(decoded[:payload][:iat].to_i),
         jti: decoded[:payload][:jti]

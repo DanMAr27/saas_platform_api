@@ -17,7 +17,7 @@ module V1
           @current_user = result.meta[:user]
           @current_payload = result.data
 
-          # 🔥 ESTABLECER TENANT SEGÚN CONTEXTO
+          # Establecer tenant context
           setup_tenant_context!
         else
           @current_user = nil
@@ -41,7 +41,7 @@ module V1
         current_user.present?
       end
 
-      # Forzar autenticación (lanzar error si no está autenticado)
+      # Forzar autenticación
       def authenticate!
         return if authenticated?
 
@@ -65,6 +65,32 @@ module V1
       # @return [Integer, nil]
       def current_tenant_id
         current_payload&.dig(:tenant_id)
+      end
+
+      # 🔥 NUEVO: Obtener membership_id del contexto actual
+      # @return [Integer, nil]
+      def current_membership_id
+        current_payload&.dig(:membership_id)
+      end
+
+      # 🔥 NUEVO: Obtener la membresía activa actual
+      # @return [TenantMembership, PlatformMembership, nil]
+      def current_membership
+        return @current_membership if defined?(@current_membership)
+
+        @current_membership = if platform_context?
+          current_user.platform_membership
+        elsif tenant_context? && current_membership_id
+          TenantMembership.find_by(id: current_membership_id, user_id: current_user.id)
+        else
+          nil
+        end
+      end
+
+      # 🔥 NUEVO: Obtener el rol actual
+      # @return [Role, nil]
+      def current_role
+        current_membership&.role
       end
 
       # Verificar si el usuario tiene contexto de plataforma
@@ -100,13 +126,11 @@ module V1
       private
 
       # Extraer token del header Authorization
-      # Formato esperado: "Bearer {token}"
       # @return [String, nil]
       def extract_token
         auth_header = headers["Authorization"] || headers["authorization"]
         return nil unless auth_header
 
-        # Formato: "Bearer {token}"
         match = auth_header.match(/^Bearer\s+(.+)$/i)
         match ? match[1] : nil
       end
@@ -118,7 +142,6 @@ module V1
         case context
         when "platform"
           # Contexto de plataforma: NO establecer tenant
-          # Platform admins operan sin tenant context por defecto
           ActsAsTenant.current_tenant = nil
 
         when "tenant"
@@ -129,7 +152,6 @@ module V1
             tenant = ::Tenant.find_by(id: tenant_id)
             ActsAsTenant.current_tenant = tenant if tenant
           else
-            # Token de tenant sin tenant_id es inválido
             ActsAsTenant.current_tenant = nil
           end
 

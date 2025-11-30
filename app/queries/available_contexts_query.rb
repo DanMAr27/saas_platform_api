@@ -1,14 +1,4 @@
-# frozen_string_literal: true
-
-# Query para obtener todos los contextos disponibles para un usuario
-# Usado tanto en login como en endpoints que necesiten listar contextos
-#
-# Uso:
-#   contexts = AvailableContextsQuery.new(user).call
-#
-# Retorna un array de hashes con:
-# - Platform contexts: { type: 'platform', role: 'super_admin', ... }
-# - Tenant contexts: { type: 'tenant', tenant_id: 1, tenant_name: '...', role: 'admin', ... }
+# app/queries/available_contexts_query.rb
 
 class AvailableContextsQuery
   attr_reader :user
@@ -62,16 +52,26 @@ class AvailableContextsQuery
     membership = user.platform_membership
 
     {
+      # 🔥 NUEVO: ID único para platform
+      id: "platform",
       type: "platform",
+      context: "platform",
+
+      # IDs relevantes
+      membership_id: membership.id,
+      tenant_id: nil,
+
+      # Info del rol
       role_id: membership.role_id,
       role: membership.role.slug,
       role_name: membership.role.name,
-      context: "platform",
-      tenant_id: nil,
+
+      # Display
       display_name: "Platform - #{membership.role.name}",
-      is_default: true, # Platform siempre es default si existe
+
+      # Metadata
+      is_default: true,
       created_at: membership.created_at.iso8601,
-      # Metadata adicional
       can_impersonate: membership.can_impersonate?,
       mfa_required: membership.support_admin?
     }
@@ -83,28 +83,43 @@ class AvailableContextsQuery
         .active
         .kept
         .includes(:tenant, :role)
-        .where(tenants: { deleted_at: nil }) # Solo tenants activos
+        .where(tenants: { deleted_at: nil })
         .map { |membership| build_tenant_context(membership) }
   end
 
   # Construir hash de contexto tenant
   def build_tenant_context(membership)
     {
+      # 🔥 NUEVO: ID único basado en membership_id
+      id: "membership_#{membership.id}",
       type: "tenant",
+      context: "tenant",
+
+      # IDs relevantes
+      membership_id: membership.id,
       tenant_id: membership.tenant_id,
+
+      # Info del tenant
       tenant_name: membership.tenant.name,
       tenant_slug: membership.tenant.slug,
       tenant_status: membership.tenant.status,
+      tenant_logo: membership.tenant.logo_url, # Si existe este campo
+
+      # Info del rol
       role_id: membership.role_id,
-      role: membership.role&.slug || membership.role, # Fallback a string si no hay role_id
-      role_name: membership.role&.name || membership.role.titleize,
+      role: membership.role.slug,
+      role_name: membership.role.name,
+
+      # Display
+      display_name: "#{membership.tenant.name} - #{membership.role.name}",
+
+      # Metadata
       is_primary_admin: membership.is_primary_admin?,
       is_default: membership.is_default?,
       membership_status: membership.status,
-      context: "tenant",
-      display_name: "#{membership.tenant.name} - #{membership.role&.name || membership.role.titleize}",
       created_at: membership.created_at.iso8601,
-      # Metadata adicional
+
+      # Info del tenant (plan/trial)
       tenant_trial: membership.tenant.trial?,
       tenant_trial_days_remaining: membership.tenant.trial? ? membership.tenant.trial_days_remaining : nil
     }

@@ -60,24 +60,20 @@ module V1
               { code: 401, message: "Invalid session token" },
               { code: 422, message: "Invalid context" }
             ],
-            detail: "Selects a specific context and returns JWT token"
+            detail: "Selects a specific context by ID and returns JWT token"
       params do
         requires :session_token,
                   type: String,
                   desc: "Session token from Step 1"
-        requires :context_type,
+        requires :context_id,
                   type: String,
-                  values: [ "platform", "tenant" ],
-                  desc: "Type of context to access"
-        optional :tenant_id,
-                  type: Integer,
-                  desc: "Tenant ID (required if context_type is tenant)"
+                  desc: "Context ID (e.g., 'platform' or 'membership_123')",
+                  documentation: { example: "membership_456" }
       end
       post "login/select-context" do
         result = Authentication::LoginStep2Service.call(
           session_token: params[:session_token],
-          context_type: params[:context_type],
-          tenant_id: params[:tenant_id]
+          context_id: params[:context_id]
         )
 
         if result.success?
