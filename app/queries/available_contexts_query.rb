@@ -103,7 +103,6 @@ class AvailableContextsQuery
       tenant_name: membership.tenant.name,
       tenant_slug: membership.tenant.slug,
       tenant_status: membership.tenant.status,
-      tenant_logo: membership.tenant.logo_url, # Si existe este campo
 
       # Info del rol
       role_id: membership.role_id,

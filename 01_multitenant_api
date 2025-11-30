@@ -266,6 +266,656 @@ module V1
   end
 end
 
+# app/api/entities/v1/tenant/tenant_user_detail_entity.rb
+# Entity para DETALLE de usuario (completa, con todas sus membresías y scopes)
+
+module V1
+  module Entities
+    class TenantUserDetailEntity < Grape::Entity
+      # ============================================
+      # DATOS DEL USUARIO
+      # ============================================
+      expose :id, documentation: {
+        type: "Integer",
+        desc: "User ID"
+      }
+
+      expose :email, documentation: {
+        type: "String"
+      }
+
+      expose :first_name, documentation: {
+        type: "String"
+      }
+
+      expose :last_name, documentation: {
+        type: "String"
+      }
+
+      expose :full_name, documentation: {
+        type: "String"
+      }
+
+      expose :phone, documentation: {
+        type: "String"
+      }
+
+      expose :avatar_url, documentation: {
+        type: "String"
+      }
+
+      # ============================================
+      # ESTADO DEL USUARIO
+      # ============================================
+      expose :active, documentation: {
+        type: "Boolean",
+        desc: "User account is active (not deleted or locked)"
+      } do |user|
+        user.active?
+      end
+
+      expose :locked, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.locked?
+      end
+
+      expose :email_verified, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.email_verified?
+      end
+
+      # ============================================
+      # TODAS LAS MEMBRESÍAS EN EL TENANT
+      # ============================================
+      expose :memberships, documentation: {
+        type: "Array",
+        desc: "All roles/memberships for this user in the tenant"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        memberships = user.tenant_memberships
+                          .kept
+                          .where(tenant_id: tenant_id)
+                          .includes(:role)
+                          .order("roles.priority ASC")
+
+        memberships.map do |membership|
+          {
+            id: membership.id,
+            role: {
+              id: membership.role.id,
+              slug: membership.role.slug,
+              name: membership.role.name,
+              priority: membership.role.priority
+            },
+            status: membership.status,
+            is_primary_admin: membership.is_primary_admin?,
+            is_default: membership.is_default?,
+            joined_at: membership.created_at&.iso8601,
+            updated_at: membership.updated_at&.iso8601,
+            invitation_pending: membership.invitation_pending?,
+            invitation_expired: membership.invitation_expired?
+          }
+        end
+      end
+
+      # ============================================
+      # ROL PRINCIPAL (para compatibilidad)
+      # ============================================
+      expose :primary_role, documentation: {
+        type: "Object",
+        desc: "Primary role (highest priority)"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        primary_membership = user.tenant_memberships
+                                 .kept
+                                 .where(tenant_id: tenant_id)
+                                 .includes(:role)
+                                 .order("roles.priority ASC")
+                                 .first
+
+        if primary_membership
+          {
+            id: primary_membership.role.id,
+            slug: primary_membership.role.slug,
+            name: primary_membership.role.name,
+            priority: primary_membership.role.priority
+          }
+        else
+          nil
+        end
+      end
+
+      # ============================================
+      # SCOPES (NODOS Y VEHÍCULOS)
+      # ============================================
+      expose :scopes,
+             if: ->(user, options) { options[:include_scopes] },
+             documentation: {
+               type: "Object",
+               desc: "Access scopes (nodes and vehicles)"
+             } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        # Obtener todos los scopes del usuario en este tenant
+        node_scopes = UserNodeScope
+                        .where(user_id: user.id, tenant_id: tenant_id)
+                        .kept
+                        .includes(:organizational_node)
+
+        vehicle_scopes = UserVehicleScope
+                          .where(user_id: user.id, tenant_id: tenant_id)
+                          .kept
+                          .includes(:vehicle)
+
+        {
+          nodes: node_scopes.map do |scope|
+            {
+              id: scope.id,
+              node_id: scope.organizational_node_id,
+              node_name: scope.organizational_node.name,
+              node_code: scope.organizational_node.code,
+              node_path: scope.organizational_node.full_path,
+              access_type: scope.access_type,
+              include_children: scope.include_children,
+              created_at: scope.created_at&.iso8601
+            }
+          end,
+
+          vehicles: vehicle_scopes.map do |scope|
+            {
+              id: scope.id,
+              vehicle_id: scope.vehicle_id,
+              vehicle_name: scope.vehicle.name,
+              license_plate: scope.vehicle.license_plate,
+              vehicle_code: scope.vehicle.code,
+              access_type: scope.access_type,
+              valid_from: scope.valid_from&.iso8601,
+              valid_until: scope.valid_until&.iso8601,
+              is_active: scope.active?,
+              created_at: scope.created_at&.iso8601
+            }
+          end,
+
+          summary: {
+            total_nodes: node_scopes.count,
+            total_vehicles: vehicle_scopes.count,
+            active_vehicles: vehicle_scopes.count(&:active?),
+            expired_vehicles: vehicle_scopes.reject(&:active?).count
+          }
+        }
+      end
+
+      # ============================================
+      # INFORMACIÓN DE INVITACIÓN
+      # ============================================
+      expose :invitation_status, documentation: {
+        type: "Object"
+      } do |user|
+        {
+          pending: user.invitation_pending?,
+          expired: user.invitation_expired?,
+          accepted_at: user.invitation_accepted_at&.iso8601,
+          invited_by: user.invited_by&.full_name
+        }
+      end
+
+      # ============================================
+      # ÚLTIMO ACCESO
+      # ============================================
+      expose :last_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.last_sign_in_at&.iso8601
+      end
+
+      expose :last_sign_in_ip, documentation: {
+        type: "String"
+      }
+
+      expose :current_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.current_sign_in_at&.iso8601
+      end
+
+      expose :sign_in_count, documentation: {
+        type: "Integer"
+      }
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      expose :created_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.created_at&.iso8601
+      end
+
+      expose :updated_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.updated_at&.iso8601
+      end
+    end
+  end
+end
+
+# app/api/entities/v1/tenant/tenant_user_detail_entity.rb
+# Entity para DETALLE de usuario (completa, con todas sus membresías y scopes)
+
+module V1
+  module Entities
+    class TenantUserDetailEntity < Grape::Entity
+      # ============================================
+      # DATOS DEL USUARIO
+      # ============================================
+      expose :id, documentation: {
+        type: "Integer",
+        desc: "User ID"
+      }
+
+      expose :email, documentation: {
+        type: "String"
+      }
+
+      expose :first_name, documentation: {
+        type: "String"
+      }
+
+      expose :last_name, documentation: {
+        type: "String"
+      }
+
+      expose :full_name, documentation: {
+        type: "String"
+      }
+
+      expose :phone, documentation: {
+        type: "String"
+      }
+
+      expose :avatar_url, documentation: {
+        type: "String"
+      }
+
+      # ============================================
+      # ESTADO DEL USUARIO
+      # ============================================
+      expose :active, documentation: {
+        type: "Boolean",
+        desc: "User account is active (not deleted or locked)"
+      } do |user|
+        user.active?
+      end
+
+      expose :locked, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.locked?
+      end
+
+      expose :email_verified, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.email_verified?
+      end
+
+      # ============================================
+      # TODAS LAS MEMBRESÍAS EN EL TENANT
+      # ============================================
+      expose :memberships, documentation: {
+        type: "Array",
+        desc: "All roles/memberships for this user in the tenant"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        memberships = user.tenant_memberships
+                          .kept
+                          .where(tenant_id: tenant_id)
+                          .includes(:role)
+                          .order("roles.priority ASC")
+
+        memberships.map do |membership|
+          {
+            id: membership.id,
+            role: {
+              id: membership.role.id,
+              slug: membership.role.slug,
+              name: membership.role.name,
+              priority: membership.role.priority
+            },
+            status: membership.status,
+            is_primary_admin: membership.is_primary_admin?,
+            is_default: membership.is_default?,
+            joined_at: membership.created_at&.iso8601,
+            updated_at: membership.updated_at&.iso8601,
+            invitation_pending: membership.invitation_pending?,
+            invitation_expired: membership.invitation_expired?
+          }
+        end
+      end
+
+      # ============================================
+      # ROL PRINCIPAL (para compatibilidad)
+      # ============================================
+      expose :primary_role, documentation: {
+        type: "Object",
+        desc: "Primary role (highest priority)"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        primary_membership = user.tenant_memberships
+                                 .kept
+                                 .where(tenant_id: tenant_id)
+                                 .includes(:role)
+                                 .order("roles.priority ASC")
+                                 .first
+
+        if primary_membership
+          {
+            id: primary_membership.role.id,
+            slug: primary_membership.role.slug,
+            name: primary_membership.role.name,
+            priority: primary_membership.role.priority
+          }
+        else
+          nil
+        end
+      end
+
+      # ============================================
+      # SCOPES (NODOS Y VEHÍCULOS)
+      # ============================================
+      expose :scopes,
+             if: ->(user, options) { options[:include_scopes] },
+             documentation: {
+               type: "Object",
+               desc: "Access scopes (nodes and vehicles)"
+             } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        # Obtener todos los scopes del usuario en este tenant
+        node_scopes = UserNodeScope
+                        .where(user_id: user.id, tenant_id: tenant_id)
+                        .kept
+                        .includes(:organizational_node)
+
+        vehicle_scopes = UserVehicleScope
+                          .where(user_id: user.id, tenant_id: tenant_id)
+                          .kept
+                          .includes(:vehicle)
+
+        {
+          nodes: node_scopes.map do |scope|
+            {
+              id: scope.id,
+              node_id: scope.organizational_node_id,
+              node_name: scope.organizational_node.name,
+              node_code: scope.organizational_node.code,
+              node_path: scope.organizational_node.full_path,
+              access_type: scope.access_type,
+              include_children: scope.include_children,
+              created_at: scope.created_at&.iso8601
+            }
+          end,
+
+          vehicles: vehicle_scopes.map do |scope|
+            {
+              id: scope.id,
+              vehicle_id: scope.vehicle_id,
+              vehicle_name: scope.vehicle.name,
+              license_plate: scope.vehicle.license_plate,
+              vehicle_code: scope.vehicle.code,
+              access_type: scope.access_type,
+              valid_from: scope.valid_from&.iso8601,
+              valid_until: scope.valid_until&.iso8601,
+              is_active: scope.active?,
+              created_at: scope.created_at&.iso8601
+            }
+          end,
+
+          summary: {
+            total_nodes: node_scopes.count,
+            total_vehicles: vehicle_scopes.count,
+            active_vehicles: vehicle_scopes.count(&:active?),
+            expired_vehicles: vehicle_scopes.reject(&:active?).count
+          }
+        }
+      end
+
+      # ============================================
+      # INFORMACIÓN DE INVITACIÓN
+      # ============================================
+      expose :invitation_status, documentation: {
+        type: "Object"
+      } do |user|
+        {
+          pending: user.invitation_pending?,
+          expired: user.invitation_expired?,
+          accepted_at: user.invitation_accepted_at&.iso8601,
+          invited_by: user.invited_by&.full_name
+        }
+      end
+
+      # ============================================
+      # ÚLTIMO ACCESO
+      # ============================================
+      expose :last_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.last_sign_in_at&.iso8601
+      end
+
+      expose :last_sign_in_ip, documentation: {
+        type: "String"
+      }
+
+      expose :current_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.current_sign_in_at&.iso8601
+      end
+
+      expose :sign_in_count, documentation: {
+        type: "Integer"
+      }
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      expose :created_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.created_at&.iso8601
+      end
+
+      expose :updated_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.updated_at&.iso8601
+      end
+    end
+  end
+end
+
+# app/api/entities/v1/tenant/tenant_user_list_entity.rb
+# Entity para LISTADO de usuarios con TODAS sus membresías en el tenant
+
+module V1
+  module Entities
+    class TenantUserListEntity < Grape::Entity
+      # ============================================
+      # DATOS DEL USUARIO
+      # ============================================
+      expose :id, documentation: {
+        type: "Integer",
+        desc: "User ID"
+      }
+
+      expose :email, documentation: {
+        type: "String"
+      }
+
+      expose :first_name, documentation: {
+        type: "String"
+      }
+
+      expose :last_name, documentation: {
+        type: "String"
+      }
+
+      expose :full_name, documentation: {
+        type: "String"
+      }
+
+      expose :phone, documentation: {
+        type: "String"
+      }
+
+      # ============================================
+      # ESTADO DEL USUARIO
+      # ============================================
+      expose :active, documentation: {
+        type: "Boolean",
+        desc: "User account is active (not deleted or locked)"
+      } do |user|
+        user.active?
+      end
+
+      expose :locked, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.locked?
+      end
+
+      expose :email_verified, documentation: {
+        type: "Boolean"
+      } do |user|
+        user.email_verified?
+      end
+
+      # ============================================
+      # MEMBRESÍAS EN EL TENANT (ARRAY)
+      # ============================================
+      expose :memberships, documentation: {
+        type: "Array",
+        desc: "All roles/memberships for this user in the tenant"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        # Obtener TODAS las membresías activas del usuario en este tenant
+        memberships = user.tenant_memberships
+                          .kept
+                          .where(tenant_id: tenant_id)
+                          .includes(:role)
+                          .order("roles.priority ASC")
+
+        memberships.map do |membership|
+          {
+            id: membership.id,
+            role: {
+              id: membership.role.id,
+              slug: membership.role.slug,
+              name: membership.role.name,
+              priority: membership.role.priority
+            },
+            status: membership.status,
+            is_primary_admin: membership.is_primary_admin?,
+            is_default: membership.is_default?,
+            joined_at: membership.created_at&.iso8601,
+            invitation_pending: membership.invitation_pending?,
+            invitation_expired: membership.invitation_expired?
+          }
+        end
+      end
+
+      # ============================================
+      # ROL PRINCIPAL (El de mayor prioridad)
+      # ============================================
+      expose :primary_role, documentation: {
+        type: "Object",
+        desc: "Primary role (highest priority) for display purposes"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        primary_membership = user.tenant_memberships
+                                 .kept
+                                 .where(tenant_id: tenant_id)
+                                 .includes(:role)
+                                 .order("roles.priority ASC")
+                                 .first
+
+        if primary_membership
+          {
+            slug: primary_membership.role.slug,
+            name: primary_membership.role.name
+          }
+        else
+          nil
+        end
+      end
+
+      # ============================================
+      # SCOPE SUMMARY (Para la columna "Scope")
+      # ============================================
+      expose :scope_summary, documentation: {
+        type: "String",
+        desc: "Human-readable scope description"
+      } do |user, options|
+        tenant_id = options[:tenant_id]
+
+        # Verificar si tiene acceso total (es admin del tenant)
+        is_admin = user.tenant_memberships
+                       .kept
+                       .active
+                       .where(tenant_id: tenant_id)
+                       .joins(:role)
+                       .exists?(roles: { slug: "tenant_admin" })
+
+        if is_admin
+          "Acceso total"
+        else
+          # Contar nodos y vehículos (si tienes estas asociaciones)
+          # Si no las tienes aún, puedes dejarlo en "Acceso limitado"
+          "Acceso limitado"
+        end
+      end
+
+      # ============================================
+      # ÚLTIMO ACCESO
+      # ============================================
+      expose :last_sign_in_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.last_sign_in_at&.iso8601
+      end
+
+      expose :last_sign_in_ip, documentation: {
+        type: "String"
+      }
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      expose :created_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.created_at&.iso8601
+      end
+
+      expose :updated_at, documentation: {
+        type: "DateTime"
+      } do |user|
+        user.updated_at&.iso8601
+      end
+    end
+  end
+end
+
 # app/api/v1/entities/user_entity.rb
 
 module V1
@@ -424,6 +1074,7 @@ module V1
     end
   end
 end
+
 # app/api/v1/entities/user_with_membership_entity.rb
 
 module V1
@@ -578,7 +1229,6 @@ module V1
   end
 end
 
-==============  API =====================
 # app/api/v1/platform/tenants_api.rb
 
 module V1
@@ -1375,100 +2025,6 @@ module V1
         end
 
         # ============================================
-        # USUARIOS DEL TENANT
-        # ============================================
-        desc "List users in tenant",
-              tags: [ "Tenant" ]
-        params do
-          optional :tenant_id, type: Integer, desc: "Tenant ID (required for platform admins)"
-          optional :status, type: String, values: TenantMembership::STATUSES
-          optional :role_slug, type: String
-          optional :page, type: Integer, default: 1
-          optional :per_page, type: Integer, default: 25, values: 1..100
-        end
-        get :users do
-          authenticate!
-
-          # Determinar el tenant
-          target_tenant = if current_user.platform_admin?
-            unless params[:tenant_id]
-              api_error(
-                message: "Platform admins must provide tenant_id parameter",
-                status: 400
-              )
-            end
-
-            tenant = ::Tenant.find_by(id: params[:tenant_id])
-            unless tenant
-              api_error(message: "Tenant not found", status: 404)
-            end
-
-            tenant
-          else
-            unless current_tenant
-              api_error(message: "Tenant context is required", status: 400)
-            end
-
-            unless current_user.has_tenant_access?(current_tenant.id)
-              api_error(message: "Access denied to this tenant", status: 403)
-            end
-
-            current_tenant
-          end
-
-          # Verificar permisos (admin o manager)
-          unless current_user.platform_admin? ||
-                 current_user.tenant_admin?(target_tenant.id) ||
-                 current_user.tenant_manager?(target_tenant.id)
-            api_error(message: "Admin or Manager role required", status: 403)
-          end
-
-          # Usar policy_scope para obtener membresías permitidas
-          # Como estamos filtrando por tenant específico, establecemos temporalmente el contexto
-          memberships = if current_user.platform_admin?
-            # Platform admins ven todas las membresías del tenant solicitado
-            target_tenant.tenant_memberships.kept.includes(:role, :user)
-          else
-            # Usar policy_scope
-            ActsAsTenant.with_tenant(target_tenant) do
-              policy_scope(
-                TenantMembership.kept.includes(:role, :user),
-                policy_scope_class: TenantMembershipPolicy::Scope
-              )
-            end
-          end
-
-          # Filtros
-          memberships = memberships.where(status: params[:status]) if params[:status]
-
-          if params[:role_slug]
-            role = Role.tenant_roles.find_by(slug: params[:role_slug])
-            memberships = memberships.where(role_id: role.id) if role
-          end
-
-          # Paginación
-          memberships = memberships.page(params[:page]).per(params[:per_page])
-
-          success_response(
-            data: memberships.map { |m|
-              Entities::TenantMembershipEntity.represent(
-                m,
-                include_user: true,
-                include_tenant: false
-              )
-            },
-            meta: {
-              current_page: memberships.current_page,
-              total_pages: memberships.total_pages,
-              total_count: memberships.total_count,
-              per_page: params[:per_page],
-              tenant_id: target_tenant.id,
-              tenant_name: target_tenant.name
-            }
-          )
-        end
-
-        # ============================================
         # INVITAR USUARIO
         # ============================================
         desc "Invite user to tenant",
@@ -1947,161 +2503,6 @@ module V1
   end
 end
 
-# app/api/v1/tenant/scopes_api.rb
-
-module V1
-  module Tenant
-    class ScopesApi < Grape::API
-      helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
-      helpers Helpers::AuthorizationHelper
-
-      namespace :tenant do
-        namespace :scopes do
-          # ============================================
-          # ASIGNAR SCOPE DE NODO
-          # ============================================
-          desc "Assign node scope to user",
-                tags: [ "Tenant - Scopes" ]
-          params do
-            optional :tenant_id, type: Integer
-            requires :user_id, type: Integer
-            requires :node_id, type: Integer
-            optional :access_type, type: String, values: UserNodeScope::ACCESS_TYPES, default: "read"
-            optional :include_children, type: Boolean, default: true
-          end
-          post :nodes do
-            authenticate!
-
-            # Determinar tenant
-            target_tenant = if current_user.platform_admin?
-              unless params[:tenant_id]
-                api_error(message: "Platform admins must provide tenant_id", status: 400)
-              end
-              ::Tenant.find(params[:tenant_id])
-            else
-              require_tenant!
-              verify_tenant_access!
-              current_tenant
-            end
-
-            user = User.find(params[:user_id])
-            node = OrganizationalNode.find(params[:node_id])
-
-            # Autorizar
-            require_tenant_admin_or_manager!
-
-            result = ::Tenant::Scopes::AssignNodeScopeService.call(
-              user: user,
-              node: node,
-              tenant: target_tenant,
-              params: declared(params),
-              current_user: current_user
-            )
-
-            if result.success?
-              status 201
-              success_response(
-                data: Entities::UserNodeScopeEntity.represent(result.data),
-                message: result.message
-              )
-            else
-              api_error(message: result.message, errors: result.errors, status: 422)
-            end
-          end
-
-          # ============================================
-          # ASIGNAR SCOPE DE VEHÍCULO
-          # ============================================
-          desc "Assign vehicle scope to user",
-                tags: [ "Tenant - Scopes" ]
-          params do
-            optional :tenant_id, type: Integer
-            requires :user_id, type: Integer
-            requires :vehicle_id, type: Integer
-            optional :access_type, type: String, values: UserVehicleScope::ACCESS_TYPES, default: "read"
-            optional :valid_from, type: DateTime
-            optional :valid_until, type: DateTime
-          end
-          post :vehicles do
-            authenticate!
-
-            # Determinar tenant
-            target_tenant = if current_user.platform_admin?
-              unless params[:tenant_id]
-                api_error(message: "Platform admins must provide tenant_id", status: 400)
-              end
-              ::Tenant.find(params[:tenant_id])
-            else
-              require_tenant!
-              verify_tenant_access!
-              current_tenant
-            end
-
-            user = User.find(params[:user_id])
-            vehicle = Vehicle.find(params[:vehicle_id])
-
-            # Autorizar
-            require_tenant_admin_or_manager!
-
-            result = ::Tenant::Scopes::AssignVehicleScopeService.call(
-              user: user,
-              vehicle: vehicle,
-              tenant: target_tenant,
-              params: declared(params),
-              current_user: current_user
-            )
-
-            if result.success?
-              status 201
-              success_response(
-                data: Entities::UserVehicleScopeEntity.represent(result.data),
-                message: result.message
-              )
-            else
-              api_error(message: result.message, errors: result.errors, status: 422)
-            end
-          end
-
-          # ============================================
-          # REVOCAR SCOPE
-          # ============================================
-          desc "Revoke scope",
-                tags: [ "Tenant - Scopes" ]
-          params do
-            requires :type, type: String, values: %w[node vehicle]
-            requires :id, type: Integer
-          end
-          delete ":type/:id" do
-            authenticate!
-            require_tenant_admin_or_manager!
-
-            scope = case params[:type]
-            when "node"
-                      UserNodeScope.find(params[:id])
-            when "vehicle"
-                      UserVehicleScope.find(params[:id])
-            end
-
-            result = ::Tenant::Scopes::RevokeScopeService.call(
-              scope: scope,
-              current_user: current_user
-            )
-
-            if result.success?
-              success_response(message: result.message)
-            else
-              api_error(message: result.message, errors: result.errors, status: 422)
-            end
-          end
-        end
-      end
-    end
-  end
-end
-
-# frozen_string_literal: true
-
 # app/api/v1/tenant/users_api.rb
 
 module V1
@@ -2124,7 +2525,6 @@ module V1
             optional :status, type: String, values: TenantMembership::STATUSES
             optional :role_slug, type: String
             optional :search, type: String, desc: "Search by name or email"
-            optional :include_scopes, type: Boolean, default: false
             optional :page, type: Integer, default: 1
             optional :per_page, type: Integer, default: 25, values: 1..100
           end
@@ -2145,44 +2545,64 @@ module V1
 
             # Autorizar
             unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id) ||
-                   current_user.tenant_manager?(target_tenant.id)
+                  current_user.tenant_admin?(target_tenant.id) ||
+                  current_user.tenant_manager?(target_tenant.id)
               api_error(message: "Admin or Manager role required", status: 403)
             end
 
-            # Obtener membresías con usuarios
-            memberships = target_tenant.tenant_memberships.kept
-                                      .includes(:role, :user, user: [ :user_node_scopes, :user_vehicle_scopes ])
+            # ✅ PARTIR DE USERS, NO DE MEMBERSHIPS
+            users_query = ::User.kept
+                                .joins(:tenant_memberships)
+                                .where(tenant_memberships: {
+                                  tenant_id: target_tenant.id,
+                                  deleted_at: nil
+                                })
+                                .distinct
 
-            # Filtros
-            memberships = memberships.where(status: params[:status]) if params[:status]
-
-            if params[:role_slug]
-              memberships = memberships.joins(:role)
-                                      .where(roles: { slug: params[:role_slug] })
+            # Aplicar filtros
+            if params[:status].present?
+              users_query = users_query.where(tenant_memberships: { status: params[:status] })
             end
 
-            if params[:search]
+            if params[:role_slug].present?
+              users_query = users_query.joins(tenant_memberships: :role)
+                                      .where(
+                                        tenant_memberships: { tenant_id: target_tenant.id },
+                                        roles: { slug: params[:role_slug] }
+                                      )
+            end
+
+            if params[:search].present?
               search_term = "%#{params[:search].downcase}%"
-              memberships = memberships.joins(:user)
-                                      .where("LOWER(users.email) LIKE ? OR
-                                              LOWER(users.first_name) LIKE ? OR
-                                              LOWER(users.last_name) LIKE ?",
-                                            search_term, search_term, search_term)
+              users_query = users_query.where(
+                "LOWER(users.email) LIKE ? OR
+                LOWER(users.first_name) LIKE ? OR
+                LOWER(users.last_name) LIKE ?",
+                search_term, search_term, search_term
+              )
             end
+
+            # Ordenar
+            users_query = users_query.order("users.first_name ASC, users.last_name ASC")
 
             # Paginación
-            memberships = memberships.page(params[:page]).per(params[:per_page])
+            paginated_users = users_query.page(params[:page]).per(params[:per_page])
 
-            # Serializar
+            # ✅ Precargar membresías con roles
+            users_with_data = paginated_users.includes(
+              tenant_memberships: :role
+            )
+
+            # ✅ IMPORTANTE: Usar V1::Entities::TenantUserListEntity
             success_response(
-              data: memberships.map { |m|
-                serialize_user_with_membership(m, include_scopes: params[:include_scopes])
-              },
+              data: V1::Entities::TenantUserListEntity.represent(
+                users_with_data,
+                tenant_id: target_tenant.id
+              ),
               meta: {
-                current_page: memberships.current_page,
-                total_pages: memberships.total_pages,
-                total_count: memberships.total_count,
+                current_page: paginated_users.current_page,
+                total_pages: paginated_users.total_pages,
+                total_count: paginated_users.total_count,
                 per_page: params[:per_page]
               }
             )
@@ -2192,12 +2612,12 @@ module V1
           # VER USUARIO
           # ============================================
           desc "Get user details",
-                tags: [ "Tenant - Users" ],
-                success: { code: 200 }
+              tags: [ "Tenant - Users" ],
+              success: { code: 200 }
           params do
-            requires :id, type: Integer
-            optional :tenant_id, type: Integer
-            optional :include_scopes, type: Boolean, default: true
+            requires :id, type: Integer, desc: "User ID"
+            optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+            optional :include_scopes, type: Boolean, default: true, desc: "Include node and vehicle scopes"
           end
           get ":id" do
             authenticate!
@@ -2211,78 +2631,59 @@ module V1
               current_tenant
             end
 
-            user = User.find(params[:id])
+            # Encontrar usuario
+            user = ::User.kept.find(params[:id])
 
-            # Autorizar
+            # Verificar autorización
             unless current_user.platform_admin? ||
-                   current_user.id == user.id ||
-                   current_user.tenant_admin?(target_tenant.id) ||
-                   current_user.tenant_manager?(target_tenant.id)
+                  current_user.id == user.id ||
+                  current_user.tenant_admin?(target_tenant.id) ||
+                  current_user.tenant_manager?(target_tenant.id)
               api_error(message: "Access denied", status: 403)
             end
 
-            # Obtener membresía en el tenant
-            membership = user.tenant_memberships
-                            .includes(:role)
-                            .find_by(tenant_id: target_tenant.id)
-
-            unless membership
+            # Verificar que el usuario tenga acceso al tenant
+            unless user.has_tenant_access?(target_tenant.id)
               api_error(message: "User not found in this tenant", status: 404)
             end
 
+            # ✅ Precargar datos relacionados
+            user_with_data = ::User.kept
+                                  .includes(
+                                    tenant_memberships: :role
+                                  )
+                                  .find(user.id)
+
+            # ✅ Responder con el USER, no con membership
             success_response(
-              data: serialize_user_with_membership(
-                membership,
+              data: V1::Entities::TenantUserDetailEntity.represent(
+                user_with_data,
                 include_scopes: params[:include_scopes],
-                detailed: true
+                tenant_id: target_tenant.id
               )
             )
           end
 
           # ============================================
-          # CREAR USUARIO (CON ROL Y SCOPES)
+          # CREAR USUARIO
           # ============================================
           desc "Create user with role and scopes",
                 tags: [ "Tenant - Users" ],
-                success: { code: 201 },
-                detail: "Creates user, assigns role, and optionally assigns scopes in one transaction"
+                success: { code: 201 }
           params do
-            optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
-
-            # Datos básicos del usuario
+            optional :tenant_id, type: Integer
             requires :email, type: String
             requires :first_name, type: String
             requires :last_name, type: String
             optional :phone, type: String
-            optional :password, type: String, desc: "If not provided, user will be invited"
-
-            # Rol
-            requires :role_slug, type: String,
-                     values: -> { Role.tenant_roles.pluck(:slug) },
-                     desc: "tenant_admin, tenant_manager, tenant_driver"
-
-            # Scopes (opcionales según rol)
-            optional :node_scopes, type: Array do
-              requires :organizational_node_id, type: Integer
-              optional :access_type, type: String,
-                       values: UserNodeScope::ACCESS_TYPES,
-                       default: "read"
-              optional :include_children, type: Boolean, default: true
-            end
-
-            optional :vehicle_scopes, type: Array do
-              requires :vehicle_id, type: Integer
-              optional :access_type, type: String,
-                       values: UserVehicleScope::ACCESS_TYPES,
-                       default: "read"
-              optional :valid_from, type: DateTime
-              optional :valid_until, type: DateTime
-            end
+            optional :password, type: String
+            requires :role_slug, type: String
+            optional :node_scopes, type: Array
+            optional :vehicle_scopes, type: Array
           end
           post do
             authenticate!
 
-            # Determinar tenant
             target_tenant = if current_user.platform_admin?
               unless params[:tenant_id]
                 api_error(message: "Platform admins must provide tenant_id", status: 400)
@@ -2294,13 +2695,12 @@ module V1
               current_tenant
             end
 
-            # Autorizar
             unless current_user.platform_admin? ||
                    current_user.tenant_admin?(target_tenant.id)
               api_error(message: "Admin role required", status: 403)
             end
 
-            result = ::Tenant::Users::CreateService.call(
+            result = ::Tenants::Users::CreateService.call(
               params: declared(params).except(:tenant_id),
               tenant: target_tenant,
               current_user: current_user
@@ -2309,10 +2709,10 @@ module V1
             if result.success?
               status 201
               success_response(
-                data: serialize_user_with_membership(
+                data: Entities::TenantUserDetailEntity.represent(
                   result.data[:membership],
                   include_scopes: true,
-                  detailed: true
+                  tenant_id: target_tenant.id
                 ),
                 message: result.message
               )
@@ -2326,217 +2726,63 @@ module V1
           end
 
           # ============================================
-          # ACTUALIZAR DATOS BÁSICOS
+          # ACTUALIZAR USUARIO (datos personales)
           # ============================================
-          desc "Update user basic information",
+          desc "Update user personal information",
                 tags: [ "Tenant - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
+            optional :tenant_id, type: Integer
             optional :first_name, type: String
             optional :last_name, type: String
             optional :phone, type: String
             optional :avatar_url, type: String
           end
-          patch ":id" do
+          put ":id" do
             authenticate!
-            require_tenant!
-            verify_tenant_access!
+
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
 
             user = User.find(params[:id])
 
-            # Autorizar
+            # Solo el propio usuario, admins o managers pueden actualizar
             unless current_user.platform_admin? ||
                    current_user.id == user.id ||
-                   current_user.tenant_admin?(current_tenant.id)
-              api_error(message: "Not authorized", status: 403)
+                   current_user.tenant_admin?(target_tenant.id) ||
+                   current_user.tenant_manager?(target_tenant.id)
+              api_error(message: "Access denied", status: 403)
             end
 
-            result = ::Tenant::Users::UpdateService.call(
+            result = ::Tenants::Users::UpdateService.call(
               user: user,
-              params: declared(params).except(:id),
+              params: declared(params).except(:id, :tenant_id),
               current_user: current_user
             )
 
             if result.success?
-              membership = user.tenant_memberships
-                              .find_by(tenant_id: current_tenant.id)
-
+              membership = user.tenant_memberships.find_by(tenant_id: target_tenant.id)
               success_response(
-                data: serialize_user_with_membership(membership, detailed: true),
-                message: result.message
-              )
-            else
-              api_error(message: result.message, errors: result.errors, status: 422)
-            end
-          end
-
-          # ============================================
-          # CAMBIAR ROL
-          # ============================================
-          desc "Change user role",
-                tags: [ "Tenant - Users" ],
-                success: { code: 200 },
-                detail: "Changes role and automatically adjusts scopes based on role requirements"
-          params do
-            requires :id, type: Integer
-            requires :role_slug, type: String,
-                     values: -> { Role.tenant_roles.pluck(:slug) }
-          end
-          patch ":id/role" do
-            authenticate!
-            require_tenant!
-            verify_tenant_access!
-            require_tenant_admin!
-
-            user = User.find(params[:id])
-            membership = user.tenant_memberships
-                            .find_by(tenant_id: current_tenant.id)
-
-            unless membership
-              api_error(message: "User not found in this tenant", status: 404)
-            end
-
-            result = ::Tenant::Users::ChangeRoleService.call(
-              membership: membership,
-              new_role_slug: params[:role_slug],
-              current_user: current_user
-            )
-
-            if result.success?
-              success_response(
-                data: serialize_user_with_membership(
-                  result.data[:membership],
-                  include_scopes: true,
-                  detailed: true
-                ),
-                message: result.message
-              )
-            else
-              api_error(message: result.message, errors: result.errors, status: 422)
-            end
-          end
-
-          # ============================================
-          # ACTUALIZAR SCOPES
-          # ============================================
-          desc "Update user scopes",
-                tags: [ "Tenant - Users" ],
-                success: { code: 200 }
-          params do
-            requires :id, type: Integer
-
-            optional :node_scopes, type: Array do
-              requires :organizational_node_id, type: Integer
-              optional :access_type, type: String, values: UserNodeScope::ACCESS_TYPES
-              optional :include_children, type: Boolean
-            end
-
-            optional :vehicle_scopes, type: Array do
-              requires :vehicle_id, type: Integer
-              optional :access_type, type: String, values: UserVehicleScope::ACCESS_TYPES
-              optional :valid_from, type: DateTime
-              optional :valid_until, type: DateTime
-            end
-          end
-          patch ":id/scopes" do
-            authenticate!
-            require_tenant!
-            verify_tenant_access!
-            require_tenant_admin_or_manager!
-
-            user = User.find(params[:id])
-
-            result = ::Tenant::Users::UpdateScopesService.call(
-              user: user,
-              tenant: current_tenant,
-              params: declared(params).except(:id),
-              current_user: current_user
-            )
-
-            if result.success?
-              membership = user.tenant_memberships
-                              .find_by(tenant_id: current_tenant.id)
-
-              success_response(
-                data: serialize_user_with_membership(
+                data: Entities::TenantUserDetailEntity.represent(
                   membership,
-                  include_scopes: true,
-                  detailed: true
+                  include_scopes: false,
+                  tenant_id: target_tenant.id
                 ),
                 message: result.message
               )
             else
-              api_error(message: result.message, errors: result.errors, status: 422)
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
             end
-          end
-
-          # ============================================
-          # SUSPENDER USUARIO
-          # ============================================
-          desc "Suspend user",
-                tags: [ "Tenant - Users" ],
-                success: { code: 200 }
-          params do
-            requires :id, type: Integer
-            optional :reason, type: String
-          end
-          post ":id/suspend" do
-            authenticate!
-            require_tenant!
-            verify_tenant_access!
-            require_tenant_admin!
-
-            user = User.find(params[:id])
-            membership = user.tenant_memberships
-                            .find_by(tenant_id: current_tenant.id)
-
-            unless membership
-              api_error(message: "User not found in this tenant", status: 404)
-            end
-
-            # No permitir suspender al primary admin
-            if membership.is_primary_admin?
-              api_error(message: "Cannot suspend primary admin", status: 422)
-            end
-
-            membership.update!(status: "suspended")
-
-            success_response(
-              data: serialize_user_with_membership(membership),
-              message: "User suspended successfully"
-            )
-          end
-
-          # ============================================
-          # REACTIVAR USUARIO
-          # ============================================
-          desc "Reactivate user",
-                tags: [ "Tenant - Users" ],
-                success: { code: 200 }
-          params do
-            requires :id, type: Integer
-          end
-          post ":id/activate" do
-            authenticate!
-            require_tenant!
-            verify_tenant_access!
-            require_tenant_admin!
-
-            user = User.find(params[:id])
-            membership = user.tenant_memberships
-                            .find_by(tenant_id: current_tenant.id)
-
-            unless membership
-              api_error(message: "User not found in this tenant", status: 404)
-            end
-
-            membership.update!(status: "active")
-
-            success_response(
-              data: serialize_user_with_membership(membership),
-              message: "User activated successfully"
-            )
           end
 
           # ============================================
@@ -2547,110 +2793,346 @@ module V1
                 success: { code: 200 }
           params do
             requires :id, type: Integer
+            optional :tenant_id, type: Integer
           end
           delete ":id" do
             authenticate!
-            require_tenant!
-            verify_tenant_access!
-            require_tenant_admin!
+
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id)
+              api_error(message: "Admin role required", status: 403)
+            end
 
             user = User.find(params[:id])
-            membership = user.tenant_memberships
-                            .find_by(tenant_id: current_tenant.id)
+            membership = user.tenant_memberships.find_by(tenant_id: target_tenant.id)
 
             unless membership
               api_error(message: "User not found in this tenant", status: 404)
             end
 
-            # No permitir eliminar al primary admin
-            if membership.is_primary_admin?
-              api_error(message: "Cannot remove primary admin", status: 422)
-            end
-
-            result = ::Tenant::Users::RemoveService.call(
+            result = ::Tenants::Users::RemoveService.call(
               membership: membership,
               current_user: current_user
             )
 
             if result.success?
-              success_response(message: result.message)
+              success_response(
+                data: { removed: true },
+                message: result.message
+              )
             else
-              api_error(message: result.message, errors: result.errors, status: 422)
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
             end
           end
 
           # ============================================
-          # HELPER PRIVADO PARA SERIALIZACIÓN
+          # CAMBIAR ROL DE USUARIO
           # ============================================
-          helpers do
-            def serialize_user_with_membership(membership, include_scopes: false, detailed: false)
-              user = membership.user
+          desc "Change user role in tenant",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            requires :role_slug, type: String
+            optional :tenant_id, type: Integer
+          end
+          put ":id/role" do
+            authenticate!
 
-              data = {
-                id: user.id,
-                email: user.email,
-                first_name: user.first_name,
-                last_name: user.last_name,
-                full_name: user.full_name,
-                phone: user.phone,
-                avatar_url: user.avatar_url,
-                email_verified: user.email_verified?,
-
-                # Membership data
-                membership: {
-                  id: membership.id,
-                  role_id: membership.role_id,
-                  role_slug: membership.role_slug,
-                  role_name: membership.role_name,
-                  status: membership.status,
-                  is_primary_admin: membership.is_primary_admin,
-                  is_default: membership.is_default,
-                  created_at: membership.created_at.iso8601
-                }
-              }
-
-              if detailed
-                data[:created_at] = user.created_at.iso8601
-                data[:last_login_at] = user.last_login_at&.iso8601
-                data[:membership][:invitation_pending] = membership.invitation_pending?
-              end
-
-              if include_scopes
-                data[:scopes] = {
-                  nodes: user.user_node_scopes
-                            .where(tenant_id: current_tenant.id)
-                            .includes(:organizational_node)
-                            .map { |scope|
-                              {
-                                id: scope.id,
-                                node_id: scope.organizational_node_id,
-                                node_name: scope.organizational_node.name,
-                                node_path: scope.organizational_node.full_path,
-                                access_type: scope.access_type,
-                                include_children: scope.include_children
-                              }
-                            },
-
-                  vehicles: user.user_vehicle_scopes
-                               .where(tenant_id: current_tenant.id)
-                               .includes(:vehicle)
-                               .map { |scope|
-                                 {
-                                   id: scope.id,
-                                   vehicle_id: scope.vehicle_id,
-                                   vehicle_name: scope.vehicle.name,
-                                   license_plate: scope.vehicle.license_plate,
-                                   access_type: scope.access_type,
-                                   valid_from: scope.valid_from&.iso8601,
-                                   valid_until: scope.valid_until&.iso8601,
-                                   active: scope.active?
-                                 }
-                               }
-                }
-              end
-
-              data
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
             end
+
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id)
+              api_error(message: "Admin role required", status: 403)
+            end
+
+            user = User.find(params[:id])
+            membership = user.tenant_memberships.find_by(tenant_id: target_tenant.id)
+
+            unless membership
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            result = ::Tenants::Users::ChangeRoleService.call(
+              membership: membership,
+              new_role_slug: params[:role_slug],
+              current_user: current_user
+            )
+
+            if result.success?
+              success_response(
+                data: Entities::TenantUserDetailEntity.represent(
+                  result.data[:membership],
+                  include_scopes: false,
+                  tenant_id: target_tenant.id
+                ),
+                message: result.message
+              )
+            else
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
+            end
+          end
+
+          # ============================================
+          # ACTUALIZAR SCOPES DE USUARIO
+          # ============================================
+          desc "Update user scopes (nodes and vehicles)",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            optional :tenant_id, type: Integer
+            optional :node_scopes, type: Array do
+              requires :organizational_node_id, type: Integer
+              optional :access_type, type: String, values: %w[read write admin]
+              optional :include_children, type: Boolean, default: true
+            end
+            optional :vehicle_scopes, type: Array do
+              requires :vehicle_id, type: Integer
+              optional :access_type, type: String, values: %w[read write]
+              optional :valid_from, type: DateTime
+              optional :valid_until, type: DateTime
+            end
+          end
+          put ":id/scopes" do
+            authenticate!
+
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id) ||
+                   current_user.tenant_manager?(target_tenant.id)
+              api_error(message: "Admin or Manager role required", status: 403)
+            end
+
+            user = User.find(params[:id])
+
+            unless user.has_tenant_access?(target_tenant.id)
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            result = ::Tenants::Users::UpdateScopesService.call(
+              user: user,
+              tenant: target_tenant,
+              params: declared(params).except(:id, :tenant_id),
+              current_user: current_user
+            )
+
+            if result.success?
+              membership = user.tenant_memberships.find_by(tenant_id: target_tenant.id)
+              success_response(
+                data: Entities::TenantUserDetailEntity.represent(
+                  membership,
+                  include_scopes: true,
+                  tenant_id: target_tenant.id
+                ),
+                message: result.message
+              )
+            else
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
+            end
+          end
+
+          # ============================================
+          # AÑADIR ROL ADICIONAL A USUARIO
+          # ============================================
+          desc "Add additional role to user in tenant (multi-role support)",
+                tags: [ "Tenant - Users" ],
+                success: { code: 201 }
+          params do
+            requires :id, type: Integer
+            requires :role_slug, type: String
+            optional :tenant_id, type: Integer
+            optional :node_scopes, type: Array
+            optional :vehicle_scopes, type: Array
+          end
+          post ":id/roles" do
+            authenticate!
+
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id)
+              api_error(message: "Admin role required", status: 403)
+            end
+
+            user = User.find(params[:id])
+
+            unless user.has_tenant_access?(target_tenant.id)
+              api_error(message: "User not found in this tenant", status: 404)
+            end
+
+            result = ::Tenants::Users::AddRoleService.call(
+              user: user,
+              tenant: target_tenant,
+              role_slug: params[:role_slug],
+              node_scopes: params[:node_scopes],
+              vehicle_scopes: params[:vehicle_scopes],
+              current_user: current_user
+            )
+
+            if result.success?
+              status 201
+              success_response(
+                data: Entities::TenantUserDetailEntity.represent(
+                  result.data[:membership],
+                  include_scopes: true,
+                  tenant_id: target_tenant.id
+                ),
+                message: result.message
+              )
+            else
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
+            end
+          end
+
+          # ============================================
+          # ELIMINAR ROL ESPECÍFICO DE USUARIO
+          # ============================================
+          desc "Remove specific role from user in tenant",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            requires :role_slug, type: String
+            optional :tenant_id, type: Integer
+          end
+          delete ":id/roles/:role_slug" do
+            authenticate!
+
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id)
+              api_error(message: "Admin role required", status: 403)
+            end
+
+            user = User.find(params[:id])
+            role = Role.find_by!(slug: params[:role_slug])
+
+            membership = user.tenant_memberships.find_by(
+              tenant_id: target_tenant.id,
+              role_id: role.id
+            )
+
+            unless membership
+              api_error(message: "User does not have this role in tenant", status: 404)
+            end
+
+            result = ::Tenants::Users::RemoveRoleService.call(
+              membership: membership,
+              current_user: current_user
+            )
+
+            if result.success?
+              success_response(
+                data: { removed: true },
+                message: result.message
+              )
+            else
+              api_error(
+                message: result.message,
+                errors: result.errors,
+                status: 422
+              )
+            end
+          end
+
+          # ============================================
+          # LISTAR TODOS LOS ROLES DEL USUARIO
+          # ============================================
+          desc "List all roles for user in tenant",
+                tags: [ "Tenant - Users" ],
+                success: { code: 200 }
+          params do
+            requires :id, type: Integer
+            optional :tenant_id, type: Integer
+          end
+          get ":id/roles" do
+            authenticate!
+
+            target_tenant = if current_user.platform_admin?
+              params[:tenant_id] ? ::Tenant.find(params[:tenant_id]) : current_tenant
+            else
+              require_tenant!
+              verify_tenant_access!
+              current_tenant
+            end
+
+            unless current_user.platform_admin? ||
+                   current_user.tenant_admin?(target_tenant.id) ||
+                   current_user.tenant_manager?(target_tenant.id)
+              api_error(message: "Access denied", status: 403)
+            end
+
+            user = User.find(params[:id])
+            memberships = user.tenant_memberships
+                             .where(tenant_id: target_tenant.id)
+                             .includes(:role)
+                             .active
+                             .kept
+
+            success_response(
+              data: memberships.map do |m|
+                {
+                  membership_id: m.id,
+                  role_slug: m.role_slug,
+                  role_name: m.role_name,
+                  status: m.status,
+                  is_primary_admin: m.is_primary_admin?,
+                  is_default: m.is_default?,
+                  created_at: m.created_at
+                }
+              end
+            )
           end
         end
       end
@@ -2962,24 +3444,20 @@ module V1
               { code: 401, message: "Invalid session token" },
               { code: 422, message: "Invalid context" }
             ],
-            detail: "Selects a specific context and returns JWT token"
+            detail: "Selects a specific context by ID and returns JWT token"
       params do
         requires :session_token,
                   type: String,
                   desc: "Session token from Step 1"
-        requires :context_type,
+        requires :context_id,
                   type: String,
-                  values: [ "platform", "tenant" ],
-                  desc: "Type of context to access"
-        optional :tenant_id,
-                  type: Integer,
-                  desc: "Tenant ID (required if context_type is tenant)"
+                  desc: "Context ID (e.g., 'platform' or 'membership_123')",
+                  documentation: { example: "membership_456" }
       end
       post "login/select-context" do
         result = Authentication::LoginStep2Service.call(
           session_token: params[:session_token],
-          context_type: params[:context_type],
-          tenant_id: params[:tenant_id]
+          context_id: params[:context_id]
         )
 
         if result.success?
