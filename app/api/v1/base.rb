@@ -21,6 +21,7 @@ module V1
     # ============================================
     mount V1::Tenant::ProfileApi
     mount V1::Tenant::OrganizationalNodesApi
+    mount V1::Tenant::OrganizationalLevelsApi
     mount V1::Tenant::VehiclesApi
     mount V1::Tenant::ScopesApi
     mount V1::Tenant::UsersApi

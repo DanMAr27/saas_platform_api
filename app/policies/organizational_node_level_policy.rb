@@ -26,11 +26,18 @@ class OrganizationalNodeLevelPolicy < ApplicationPolicy
 
   class Scope < ApplicationPolicy::Scope
     def resolve
-      if platform_admin?
-        scope.all
-      elsif ActsAsTenant.current_tenant.present?
-        scope.where(tenant_id: ActsAsTenant.current_tenant.id)
+      if user.platform_admin?
+        # Platform admin: usar el context (tenant) si está presente
+        if context.present?
+          scope.where(tenant_id: context.id)
+        else
+          scope.all
+        end
+      elsif context.present?
+        # Tenant user: usar el context (su tenant)
+        scope.where(tenant_id: context.id)
       else
+        # Sin context = sin acceso
         scope.none
       end
     end

@@ -37,6 +37,9 @@ class OrganizationalNode < ApplicationRecord
   has_many :ancestors, through: :ancestor_closures, source: :ancestor
   has_many :descendants, through: :descendant_closures, source: :descendant
 
+  # 🆕 NUEVO: Asociación con vehículos (ajusta según tu modelo)
+  has_many :vehicles, dependent: :restrict_with_error
+
   # ============================================
   # VALIDATIONS
   # ============================================
@@ -47,6 +50,9 @@ class OrganizationalNode < ApplicationRecord
   validate :parent_must_be_higher_level
   validate :parent_must_be_same_tenant
   validate :prevent_circular_reference
+
+  # 🆕 NUEVO: Validar que el nivel permita vehículos si hay vehículos asignados
+  validate :level_allows_vehicles, if: :has_vehicles?
 
   # ============================================
   # CALLBACKS
@@ -66,6 +72,11 @@ class OrganizationalNode < ApplicationRecord
   scope :with_level, -> { includes(:level) }
   scope :leaves, -> { where.not(id: select(:parent_id).distinct) }
 
+  # 🆕 NUEVO: Scopes adicionales para filtrado
+  scope :allows_vehicles, -> { joins(:level).where(organizational_node_levels: { allows_vehicles: true }) }
+  scope :allows_users, -> { joins(:level).where(organizational_node_levels: { allows_users: true }) }
+  scope :with_full_hierarchy, -> { includes(:level, :parent, :ancestors) }
+
   # ============================================
   # CLASS METHODS
   # ============================================
@@ -77,9 +88,9 @@ class OrganizationalNode < ApplicationRecord
       nodes.active.includes(:level, :children).order(:name)
     end
 
-    # Buscar por ruta completa (ej: "Company/Region/Branch")
-    def find_by_path(path, tenant:)
-      names = path.split("/")
+    # ✏️ MEJORADO: Ahora acepta separador personalizado
+    def find_by_path(path, tenant:, separator: "/")
+      names = path.split(separator)
       current_node = nil
 
       names.each do |name|
@@ -90,6 +101,26 @@ class OrganizationalNode < ApplicationRecord
       end
 
       current_node
+    end
+
+    # 🆕 NUEVO: Obtener todas las opciones formateadas para dropdown
+    # Este método es clave para tu caso de uso de selects
+    def dropdown_options(tenant:, only_vehicles: false)
+      scope = where(tenant: tenant).active.with_full_hierarchy
+      scope = scope.allows_vehicles if only_vehicles
+
+      scope.map do |node|
+        {
+          value: node.id,
+          label: node.full_path,                    # Path completo: "Cliente / Sucursal 1 / Dpto 1"
+          level_order: node.level.level_order,
+          level_name: node.level.name,
+          parent_id: node.parent_id,
+          root_name: node.root_node&.name,
+          can_assign_vehicles: node.level.allows_vehicles,
+          can_assign_users: node.level.allows_users
+        }
+      end.sort_by { |opt| opt[:label] }
     end
   end
 
@@ -142,9 +173,21 @@ class OrganizationalNode < ApplicationRecord
     ancestor_closures.where.not(ancestor_id: id).maximum(:depth) || 0
   end
 
-  # Ruta completa del nodo (ej: "Company > Region > Branch")
-  def full_path(separator: " > ")
-    ancestor_chain.pluck(:name).push(name).join(separator)
+  # ✏️ MEJORADO: Ruta completa del nodo usando el nuevo método auxiliar
+  def full_path(separator: " / ")
+    path_array.join(separator)
+  end
+
+  # 🆕 NUEVO: Array con los nombres del path
+  # Ejemplo: ["CarfastCliente", "Sucursal 1", "Departamento1"]
+  def path_array
+    ancestor_chain.pluck(:name).push(name)
+  end
+
+  # 🆕 NUEVO: Array con los IDs del path (útil para reconstruir selección)
+  # Ejemplo: [1, 5, 12]
+  def path_ids
+    ancestor_chain.pluck(:id).push(id)
   end
 
   # Ruta completa con códigos (ej: "COMP/REG-N/BCN-01")
@@ -201,6 +244,44 @@ class OrganizationalNode < ApplicationRecord
     }
   end
 
+  # 🆕 NUEVO: Información para dropdown/select
+  # Devuelve un hash con toda la info necesaria para el frontend
+  def to_dropdown_option
+    {
+      value: id,
+      label: full_path,
+      level_order: level.level_order,
+      level_name: level.name,
+      parent_id: parent_id,
+      root_name: root_node&.name,
+      can_assign_vehicles: level.allows_vehicles,
+      can_assign_users: level.allows_users,
+      path_ids: path_ids
+    }
+  end
+
+  # 🆕 NUEVO: Información completa con jerarquía
+  # Útil para respuestas API detalladas
+  def hierarchy_info
+    {
+      id: id,
+      name: name,
+      code: code,
+      full_path: full_path,
+      path_array: path_array,
+      level: {
+        id: level.id,
+        name: level.name,
+        order: level.level_order
+      },
+      depth: depth,
+      is_root: root?,
+      is_leaf: leaf?,
+      parent: parent ? { id: parent.id, name: parent.name } : nil,
+      children_count: children.count
+    }
+  end
+
   private
 
   # Validar que el padre sea de nivel superior
@@ -232,6 +313,18 @@ class OrganizationalNode < ApplicationRecord
     elsif parent&.ancestor_of?(self)
       errors.add(:parent_id, "would create a circular reference")
     end
+  end
+
+  # 🆕 NUEVO: Validar que el nivel permita vehículos
+  def level_allows_vehicles
+    unless level&.allows_vehicles
+      errors.add(:base, "This organizational level does not allow vehicle assignment")
+    end
+  end
+
+  # 🆕 NUEVO: Helper para validación
+  def has_vehicles?
+    vehicles.any?
   end
 
   # Crear registros en closure table

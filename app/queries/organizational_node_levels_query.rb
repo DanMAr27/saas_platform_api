@@ -17,7 +17,11 @@ class OrganizationalNodeLevelsQuery
   private
 
   def apply_filters(relation)
-    relation = relation.where(is_system: params[:is_system]) if params.key?(:is_system)
+    # ✅ Verificar que la clave exista Y que el valor no sea nil
+    if params.key?(:is_system) && !params[:is_system].nil?
+      relation = relation.where(is_system: params[:is_system])
+    end
+
     relation = relation.where(allows_vehicles: true) if params[:allows_vehicles]
     relation = relation.where(allows_users: true) if params[:allows_users]
     relation
