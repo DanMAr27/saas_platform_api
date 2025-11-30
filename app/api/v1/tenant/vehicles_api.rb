@@ -100,13 +100,16 @@ module V1
 
             authorize!(vehicle, :show?, policy_class: VehiclePolicy)
 
-            present vehicle,
-                    with: Entities::VehicleEntity,
-                    show_details: true,
-                    show_status: true,
-                    show_organization: true,
-                    include_node: true,
-                    show_timestamps: true
+            success_response(
+              data: Entities::VehicleEntity.represent(
+                vehicle,
+                show_details: true,
+                show_status: true,
+                show_organization: true,
+                include_node: true,
+                show_timestamps: true
+              )
+            )
           end
 
           # ============================================
