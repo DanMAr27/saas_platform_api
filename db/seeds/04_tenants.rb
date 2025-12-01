@@ -1,5 +1,6 @@
 # db/seeds/04_tenants.rb
-# Tenants con diferentes estados, planes y membresías con roles correctamente asignados
+# Tenants con diferentes estados, planes y membresías
+# CORREGIDO: Solo crear ADMINS (sin scopes) y usuarios INVITED
 
 puts "\n🏢 Creating Tenants..."
 
@@ -10,25 +11,25 @@ driver_role = Role.find_by!(slug: 'tenant_driver')
 viewer_role = Role.find_by(slug: 'tenant_viewer')
 coordinator_role = Role.find_by(slug: 'fleet_coordinator')
 
-# Usuarios existentes para agregar a tenants
-john = User.find_by(email: 'john.doe@example.com')
-jane = User.find_by(email: 'jane.smith@example.com')
-carlos = User.find_by(email: 'carlos.garcia@example.com')
-
 # ============================================
 # HELPER PARA CREAR MEMBRESÍAS
 # ============================================
 
 def create_tenant_membership(user, tenant, role, options = {})
   defaults = {
-    status: 'active',
+    # ⚠️ CRÍTICO: Si el rol requiere scopes, crear como INVITED
+    # Se activará después de crear los scopes en 07_scopes.rb
+    status: role.requires_any_scope? ? 'invited' : 'active',
     created_by: options[:created_by],
     is_primary_admin: options[:is_primary_admin] || false,
     is_default: options[:is_default] || false
   }
 
+  # Si se pasa status explícito, usarlo
+  defaults[:status] = options[:status] if options[:status]
+
   TenantMembership.create_with(defaults.merge(role: role))
-    .find_or_create_by!(user: user, tenant: tenant)
+    .find_or_create_by!(user: user, tenant: tenant, role: role)
 end
 
 # ============================================
@@ -69,7 +70,7 @@ acme = Tenant.create_with(
 
 puts "    ✓ Acme Corporation (TRIAL - expires in 20 days)"
 
-# ============ ADMIN PRINCIPAL (Acme) ============
+# ============ ADMIN PRINCIPAL (Acme) - NO REQUIERE SCOPES ============
 acme_admin = User.create_with(
   first_name: 'María',
   last_name: 'García',
@@ -83,11 +84,12 @@ create_tenant_membership(
   acme_admin, acme, admin_role,
   created_by: acme_admin.id,
   is_primary_admin: true,
-  is_default: true
+  is_default: true,
+  status: 'active' # Admin NO requiere scopes
 )
-puts "      Admin: maria.garcia@acme.com"
+puts "      Admin: maria.garcia@acme.com (active)"
 
-# ============ MANAGER (Acme) ============
+# ============ MANAGER (Acme) - REQUIERE NODE SCOPES ============
 acme_manager = User.create_with(
   first_name: 'Carlos',
   last_name: 'López',
@@ -97,13 +99,15 @@ acme_manager = User.create_with(
   email_verified_at: Time.current
 ).find_or_create_by!(email: 'carlos.lopez@acme.com')
 
+# Manager requiere node scopes -> crear como INVITED
 create_tenant_membership(
   acme_manager, acme, manager_role,
-  created_by: acme_admin.id
+  created_by: acme_admin.id,
+  status: 'invited' # Se activará en 07_scopes.rb después de asignar nodos
 )
-puts "      Manager: carlos.lopez@acme.com"
+puts "      Manager: carlos.lopez@acme.com (invited - pending scopes)"
 
-# ============ DRIVER (Acme - invitado) ============
+# ============ DRIVER (Acme) - REQUIERE VEHICLE SCOPES ============
 acme_driver = User.create_with(
   first_name: 'Ana',
   last_name: 'Rodríguez',
@@ -112,18 +116,16 @@ acme_driver = User.create_with(
   phone: '+34600111113'
 ).find_or_create_by!(email: 'ana.rodriguez@acme.com')
 
-TenantMembership.create_with(
-  tenant: acme,
-  role: driver_role,
-  status: 'invited',
-  invitation_token: SecureRandom.hex(32),
-  invitation_sent_at: 2.days.ago,
-  created_by: acme_admin.id
-).find_or_create_by!(user: acme_driver)
-puts "      Driver: ana.rodriguez@acme.com (INVITED - pending)"
+# Driver requiere vehicle scopes -> crear como INVITED
+create_tenant_membership(
+  acme_driver, acme, driver_role,
+  created_by: acme_admin.id,
+  status: 'invited' # Se activará en 07_scopes.rb después de asignar vehículos
+)
+puts "      Driver: ana.rodriguez@acme.com (invited - pending scopes)"
 
 # ============================================
-# TENANT 2: ACTIVE - BASIC PLAN
+# TENANT 2: ACTIVE - BASIC PLAN (Tech Startup)
 # ============================================
 
 puts "\n  Creating Active Tenant (Basic Plan):"
@@ -170,9 +172,10 @@ create_tenant_membership(
   tech_admin, techstart, admin_role,
   created_by: tech_admin.id,
   is_primary_admin: true,
-  is_default: true
+  is_default: true,
+  status: 'active'
 )
-puts "      Admin: joan.martinez@techstartup.com"
+puts "      Admin: joan.martinez@techstartup.com (active)"
 
 # ============ MANAGER (Tech Startup) ============
 tech_manager = User.create_with(
@@ -186,9 +189,10 @@ tech_manager = User.create_with(
 
 create_tenant_membership(
   tech_manager, techstart, manager_role,
-  created_by: tech_admin.id
+  created_by: tech_admin.id,
+  status: 'invited'
 )
-puts "      Manager: anna.puig@techstartup.com"
+puts "      Manager: anna.puig@techstartup.com (invited - pending scopes)"
 
 # ============ DRIVER (Tech Startup) ============
 tech_driver = User.create_with(
@@ -202,12 +206,13 @@ tech_driver = User.create_with(
 
 create_tenant_membership(
   tech_driver, techstart, driver_role,
-  created_by: tech_admin.id
+  created_by: tech_admin.id,
+  status: 'invited'
 )
-puts "      Driver: sergi.rovira@techstartup.com"
+puts "      Driver: sergi.rovira@techstartup.com (invited - pending scopes)"
 
 # ============================================
-# TENANT 3: ACTIVE - PROFESSIONAL PLAN
+# TENANT 3: ACTIVE - PROFESSIONAL PLAN (Global Logistics)
 # ============================================
 
 puts "\n  Creating Active Tenant (Professional Plan):"
@@ -253,9 +258,10 @@ create_tenant_membership(
   logistics_admin, logistics, admin_role,
   created_by: logistics_admin.id,
   is_primary_admin: true,
-  is_default: true
+  is_default: true,
+  status: 'active'
 )
-puts "      Admin: patricia.torres@globallogistics.com"
+puts "      Admin: patricia.torres@globallogistics.com (active)"
 
 # ============ FLEET COORDINATOR (Logistics) ============
 if coordinator_role
@@ -270,12 +276,13 @@ if coordinator_role
 
   create_tenant_membership(
     fleet_coord, logistics, coordinator_role,
-    created_by: logistics_admin.id
+    created_by: logistics_admin.id,
+    status: 'invited'
   )
-  puts "      Fleet Coordinator: jorge.ruiz@globallogistics.com"
+  puts "      Fleet Coordinator: jorge.ruiz@globallogistics.com (invited - pending scopes)"
 end
 
-# ============ MANAGERS - 3 MANAGERS CON DIFERENTES REGIONES ============
+# ============ MANAGERS - 3 MANAGERS ============
 3.times do |i|
   manager = User.create_with(
     first_name: %w[David Laura Miguel][i],
@@ -288,12 +295,13 @@ end
 
   create_tenant_membership(
     manager, logistics, manager_role,
-    created_by: logistics_admin.id
+    created_by: logistics_admin.id,
+    status: 'invited'
   )
 end
-puts "      Managers: 3 active"
+puts "      Managers: 3 (invited - pending scopes)"
 
-# ============ DRIVERS - 5 DRIVERS CON ACCESO A VEHÍCULOS ============
+# ============ DRIVERS - 5 DRIVERS ============
 5.times do |i|
   driver = User.create_with(
     first_name: "Driver",
@@ -306,12 +314,13 @@ puts "      Managers: 3 active"
 
   create_tenant_membership(
     driver, logistics, driver_role,
-    created_by: logistics_admin.id
+    created_by: logistics_admin.id,
+    status: 'invited'
   )
 end
-puts "      Drivers: 5 active"
+puts "      Drivers: 5 (invited - pending scopes)"
 
-# ============ VIEWER - READONLY ACCESS ============
+# ============ VIEWER ============
 if viewer_role
   viewer = User.create_with(
     first_name: 'Monitor',
@@ -324,9 +333,10 @@ if viewer_role
 
   create_tenant_membership(
     viewer, logistics, viewer_role,
-    created_by: logistics_admin.id
+    created_by: logistics_admin.id,
+    status: 'invited'
   )
-  puts "      Viewer: monitor.analytics@globallogistics.com (read-only)"
+  puts "      Viewer: monitor.analytics@globallogistics.com (invited - pending scopes)"
 end
 
 # ============================================
@@ -335,7 +345,6 @@ end
 
 puts "\n  Creating User with Multiple Memberships:"
 
-# Crear usuario que participa en múltiples tenants
 multi_tenant_user = User.create_with(
   first_name: 'Operativo',
   last_name: 'Universal',
@@ -345,30 +354,33 @@ multi_tenant_user = User.create_with(
   email_verified_at: 5.months.ago
 ).find_or_create_by!(email: 'operativo.universal@example.com')
 
-# Manager en Acme
+# Manager en Acme (invited)
 create_tenant_membership(
   multi_tenant_user, acme, manager_role,
-  created_by: acme_admin.id
+  created_by: acme_admin.id,
+  status: 'invited'
 )
 
-# Driver en Tech Startup
+# Driver en Tech Startup (invited)
 create_tenant_membership(
   multi_tenant_user, techstart, driver_role,
-  created_by: tech_admin.id
+  created_by: tech_admin.id,
+  status: 'invited'
 )
 
-# Viewer en Logistics
+# Viewer en Logistics (invited)
 if viewer_role
   create_tenant_membership(
     multi_tenant_user, logistics, viewer_role,
-    created_by: logistics_admin.id
+    created_by: logistics_admin.id,
+    status: 'invited'
   )
 end
 
 puts "    ✓ operativo.universal@example.com"
-puts "      - Manager @ Acme Corporation"
-puts "      - Driver @ Tech Startup Inc"
-puts "      - Viewer @ Global Logistics Pro"
+puts "      - Manager @ Acme Corporation (invited)"
+puts "      - Driver @ Tech Startup Inc (invited)"
+puts "      - Viewer @ Global Logistics Pro (invited)" if viewer_role
 
 # ============================================
 # TENANT 4: SUSPENDED
@@ -409,7 +421,7 @@ TenantMembership.create_with(
   status: 'suspended',
   is_primary_admin: true,
   created_by: suspended_admin.id
-).find_or_create_by!(user: suspended_admin)
+).find_or_create_by!(user: suspended_admin, tenant: suspended, role: admin_role)
 
 puts "    ✓ Suspended Company Ltd (SUSPENDED - payment issue)"
 
@@ -491,9 +503,10 @@ create_tenant_membership(
   enterprise_admin, enterprise, admin_role,
   created_by: enterprise_admin.id,
   is_primary_admin: true,
-  is_default: true
+  is_default: true,
+  status: 'active'
 )
-puts "      Admin: admin@enterprise.com"
+puts "      Admin: admin@enterprise.com (active)"
 
 # ============ MANAGERS (Enterprise - 5 managers) ============
 5.times do |i|
@@ -508,10 +521,11 @@ puts "      Admin: admin@enterprise.com"
 
   create_tenant_membership(
     manager, enterprise, manager_role,
-    created_by: enterprise_admin.id
+    created_by: enterprise_admin.id,
+    status: 'invited'
   )
 end
-puts "      Managers: 5 regional managers"
+puts "      Managers: 5 (invited - pending scopes)"
 
 # ============ DRIVERS (Enterprise - 10 drivers) ============
 10.times do |i|
@@ -526,10 +540,11 @@ puts "      Managers: 5 regional managers"
 
   create_tenant_membership(
     driver, enterprise, driver_role,
-    created_by: enterprise_admin.id
+    created_by: enterprise_admin.id,
+    status: 'invited'
   )
 end
-puts "      Drivers: 10 active"
+puts "      Drivers: 10 (invited - pending scopes)"
 
 # ============================================
 # RESUMEN
@@ -561,19 +576,31 @@ User.joins(:tenant_memberships)
   .having('COUNT(tenant_memberships.id) > 1')
   .order('membership_count DESC')
   .each do |user|
-    puts "    #{user.email}: #{user.membership_count} tenants"
+    memberships = user.tenant_memberships.includes(:tenant, :role)
+    puts "    #{user.email} (#{memberships.count} memberships):"
+    memberships.each do |m|
+      puts "      - #{m.tenant.name}: #{m.role.name} (#{m.status})"
+    end
   end
 
 puts "\n  🏢 Tenant Access Info:"
-Tenant.active.each do |tenant|
+Tenant.kept.each do |tenant|
   primary_admin = tenant.primary_admin
-  puts "    #{tenant.name} (#{tenant.plan})"
-  puts "      Admin: #{primary_admin&.email || 'N/A'}"
-  puts "      Members: #{tenant.active_memberships.count}/#{tenant.max_users}"
-  puts "      - Admins: #{tenant.tenant_memberships.where(role: admin_role).active.count}"
-  puts "      - Managers: #{tenant.tenant_memberships.where(role: manager_role).active.count}"
-  puts "      - Drivers: #{tenant.tenant_memberships.where(role: driver_role).active.count}"
-  if viewer_role
-    puts "      - Viewers: #{tenant.tenant_memberships.where(role: viewer_role).active.count}"
+  puts "    #{tenant.name} (#{tenant.plan.upcase} - #{tenant.status})"
+  puts "      Primary Admin: #{primary_admin&.email || 'N/A'}"
+  puts "      Members: #{tenant.tenant_memberships.kept.count}/#{tenant.max_users}"
+
+  # Contar por rol
+  role_counts = tenant.tenant_memberships.kept.joins(:role)
+    .group('roles.name', 'tenant_memberships.status')
+    .count
+
+  role_counts.each do |(role_name, status), count|
+    puts "      - #{role_name} (#{status}): #{count}"
   end
 end
+
+puts "\n  ⚠️  IMPORTANT NOTE:"
+puts "     Roles requiring scopes (Manager, Driver, Viewer, Coordinator)"
+puts "     are created as 'invited' and will be activated in 07_scopes.rb"
+puts "     after proper scope assignment (nodes or vehicles)"

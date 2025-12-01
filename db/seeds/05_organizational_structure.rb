@@ -1,5 +1,3 @@
-# frozen_string_literal: true
-
 # db/seeds/05_organizational_structure.rb
 # Estructura organizacional jerárquica para tenants
 

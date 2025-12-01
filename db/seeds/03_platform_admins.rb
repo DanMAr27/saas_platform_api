@@ -1,5 +1,3 @@
-# frozen_string_literal: true
-
 # db/seeds/03_platform_admins.rb
 # Platform admins con diferentes configuraciones
 

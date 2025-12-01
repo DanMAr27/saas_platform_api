@@ -1,41 +1,1809 @@
-# frozen_string_literal: true
+# db/seeds.rb
+# Sistema de seeds completo para desarrollo y testing
+
+puts "🌱 Starting database seeding..."
+puts "=" * 80
+
+# ============================================
+# CONFIGURACIÓN
+# ============================================
+
+# Deshabilitar auditoría durante seeds
+PaperTrail.enabled = false
+
+# Deshabilitar validaciones de tenant temporalmente
+ActsAsTenant.current_tenant = nil
+
+# ============================================
+# OPCIÓN: LIMPIAR BASE DE DATOS
+# ============================================
+
+if ENV['RESET_DB'] == 'true' || Rails.env.development?
+  puts "\n⚠️  RESET_DB enabled - Cleaning database..."
+
+  # Orden de eliminación (respetando foreign keys)
+  [
+    'organizational_node_closures',
+    'user_vehicle_scopes',
+    'user_node_scopes',
+    'vehicles',
+    'organizational_nodes',
+    'organizational_node_levels',
+    'tenant_memberships',
+    'platform_memberships',
+    'jwt_blacklists',
+    'tenants',
+    'users',
+    'roles',
+    'versions' # PaperTrail
+  ].each do |table|
+    begin
+      ActiveRecord::Base.connection.execute("TRUNCATE TABLE #{table} RESTART IDENTITY CASCADE")
+      puts "  ✓ Truncated: #{table}"
+    rescue => e
+      puts "  ⚠️  Could not truncate #{table}: #{e.message}"
+    end
+  end
+
+  puts "\n✅ Database cleaned!\n"
+end
+
+# ============================================
+# CARGAR SEEDS EN ORDEN
+# ============================================
+
+seeds_dir = Rails.root.join('db', 'seeds')
+
+# Orden específico de ejecución
+seed_files = [
+  '01_roles.rb',           # Primero: catálogo de roles
+  '02_users.rb',           # Segundo: usuarios base
+  '03_platform_admins.rb', # Tercero: admins de plataforma
+  '04_tenants.rb',         # Cuarto: tenants y membresías
+  '05_organizational_structure.rb', # Quinto: estructura organizacional
+  '06_vehicles.rb',        # Sexto: vehículos
+  '07_scopes.rb'           # Séptimo: scopes de acceso
+]
+
+seed_files.each do |file|
+  file_path = seeds_dir.join(file)
+
+  if File.exist?(file_path)
+    puts "\n" + "=" * 80
+    puts "📄 Processing: #{file}"
+    puts "=" * 80
+
+    begin
+      load(file_path)
+    rescue => e
+      puts "\n❌ Error in #{file}:"
+      puts "   #{e.message}"
+      puts "   #{e.backtrace.first(3).join("\n   ")}"
+      raise e if Rails.env.production?
+    end
+  else
+    puts "\n⚠️  File not found: #{file}"
+  end
+end
+
+# ============================================
+# RESUMEN FINAL
+# ============================================
+
+puts "\n" + "=" * 80
+puts "📊 FINAL DATABASE SUMMARY"
+puts "=" * 80
+
+puts "\n👥 Users & Authentication:"
+puts "  - Total Users: #{User.count}"
+puts "  - Verified Users: #{User.verified.count}"
+puts "  - Active Users: #{User.kept.count}"
+puts "  - Deleted Users: #{User.discarded.count}"
+
+puts "\n🎭 Roles & Memberships:"
+puts "  - Roles: #{Role.count}"
+puts "    - Platform Roles: #{Role.platform_roles.count}"
+puts "    - Tenant Roles: #{Role.tenant_roles.count}"
+puts "  - Platform Memberships: #{PlatformMembership.count}"
+puts "  - Tenant Memberships: #{TenantMembership.count}"
+
+puts "\n🏢 Tenants:"
+puts "  - Total Tenants: #{Tenant.count}"
+puts "    - Trial: #{Tenant.trial.count}"
+puts "    - Active: #{Tenant.active.count}"
+puts "    - Suspended: #{Tenant.suspended.count}"
+
+if defined?(OrganizationalNode)
+  # Temporalmente desactivar ActsAsTenant para contar
+  ActsAsTenant.without_tenant do
+    puts "\n🌳 Organizational Structure:"
+    puts "  - Levels: #{OrganizationalNodeLevel.unscoped.count}"
+    puts "  - Nodes: #{OrganizationalNode.unscoped.count}"
+    puts "  - Closure Records: #{OrganizationalNodeClosure.count}"
+  end
+end
+
+if defined?(Vehicle)
+  # Temporalmente desactivar ActsAsTenant para contar
+  ActsAsTenant.without_tenant do
+    puts "\n🚗 Vehicles:"
+    puts "  - Total Vehicles: #{Vehicle.unscoped.count}"
+
+    # Contar por estado requiere unscoped
+    vehicles_by_status = Vehicle.unscoped.group(:status).count
+    puts "  - Active: #{vehicles_by_status['active'] || 0}"
+    puts "  - In Maintenance: #{vehicles_by_status['maintenance'] || 0}"
+    puts "  - Inactive: #{vehicles_by_status['inactive'] || 0}"
+  end
+end
+
+puts "\n" + "=" * 80
+puts "✅ Database seeding completed successfully! 🎉"
+puts "=" * 80
+
+# Re-habilitar auditoría
+PaperTrail.enabled = true
+
+puts "\n💡 Useful commands:"
+puts "  - Reset & reseed: rails db:reset RESET_DB=true"
+puts "  - Just reseed: rails db:seed RESET_DB=true"
+puts ""
+
+# db/seeds/01_roles.rb
+# Catálogo completo de roles del sistema
+# ACTUALIZADO: Con nuevos campos de scope (allows_node_scope, allows_vehicle_scope, requires_any_scope)
+
+puts "\n🎭 Creating Roles..."
+
+# ============================================
+# ROLES DE PLATAFORMA
+# ============================================
+
+puts "\n  Platform Roles:"
+
+super_admin_role = Role.create_with(
+  name: 'Super Admin',
+  description: 'Full access to the entire platform. Can manage all tenants, users, and system settings. Has unrestricted access to all data and features.',
+  context: 'platform',
+  is_system: true,
+  priority: 1,
+  # 🆕 NUEVOS CAMPOS: Platform roles no usan scopes
+  allows_node_scope: false,
+  allows_vehicle_scope: false,
+  requires_any_scope: false,
+  settings: {
+    can_access_all_tenants: true,
+    can_manage_platform_settings: true,
+    can_manage_all_users: true,
+    can_delete_tenants: true,
+    can_view_audit_logs: true
+  }
+).find_or_create_by!(slug: 'super_admin')
+puts "    ✓ Super Admin"
+
+support_admin_role = Role.create_with(
+  name: 'Support Admin',
+  description: 'Customer support access. Can view and impersonate users across tenants for troubleshooting. Read-only access to most data.',
+  context: 'platform',
+  is_system: true,
+  priority: 2,
+  # 🆕 NUEVOS CAMPOS: Platform roles no usan scopes
+  allows_node_scope: false,
+  allows_vehicle_scope: false,
+  requires_any_scope: false,
+  settings: {
+    can_impersonate_users: true,
+    can_view_all_tenants: true,
+    can_access_support_tools: true,
+    can_view_audit_logs: true,
+    requires_mfa: true
+  }
+).find_or_create_by!(slug: 'support_admin')
+puts "    ✓ Support Admin"
+
+# ============================================
+# ROLES DE TENANT (SISTEMA)
+# ============================================
+
+puts "\n  Tenant Roles:"
+
+tenant_admin_role = Role.create_with(
+  name: 'Tenant Admin',
+  description: 'Full administrative access within the tenant. Can manage users, settings, billing, and all resources. Primary administrator role for tenant organizations.',
+  context: 'tenant',
+  is_system: true,
+  priority: 10,
+  # 🆕 NUEVOS CAMPOS: Admin no requiere scopes = acceso total
+  allows_node_scope: false,
+  allows_vehicle_scope: false,
+  requires_any_scope: false,
+  settings: {
+    can_manage_users: true,
+    can_manage_billing: true,
+    can_manage_settings: true,
+    can_delete_resources: true,
+    can_view_all_data: true,
+    can_export_data: true,
+    access_level: 'full'
+  }
+).find_or_create_by!(slug: 'tenant_admin')
+puts "    ✓ Tenant Admin (no scopes required - full access)"
+
+tenant_manager_role = Role.create_with(
+  name: 'Tenant Manager',
+  description: 'Management access within assigned organizational nodes. Can view and manage resources, operations, and users within their scope. Ideal for department heads and regional managers.',
+  context: 'tenant',
+  is_system: true,
+  priority: 20,
+  # 🆕 NUEVOS CAMPOS: Manager requiere NODE scopes
+  allows_node_scope: true,      # ✅ Permite node scopes
+  allows_vehicle_scope: false,  # ❌ No permite vehicle scopes
+  requires_any_scope: true,     # ✅ Requiere al menos un scope
+  settings: {
+    can_manage_resources: true,
+    can_view_reports: true,
+    can_create_records: true,
+    can_edit_records: true,
+    can_view_all_vehicles: true,      # Puede ver todos los vehículos
+    can_manage_node_vehicles: true,   # Puede gestionar vehículos en sus nodos
+    can_manage_node_users: true,      # Puede gestionar usuarios en sus nodos
+    access_level: 'node_based'
+  }
+).find_or_create_by!(slug: 'tenant_manager')
+puts "    ✓ Tenant Manager (requires node scopes)"
+
+tenant_driver_role = Role.create_with(
+  name: 'Tenant Driver',
+  description: 'Basic operational access to assigned vehicles. Can operate vehicles, create trips, and view basic reports. Limited to assigned vehicle scope only.',
+  context: 'tenant',
+  is_system: true,
+  priority: 30,
+  # 🆕 NUEVOS CAMPOS: Driver requiere VEHICLE scopes
+  allows_node_scope: false,     # ❌ No permite node scopes
+  allows_vehicle_scope: true,   # ✅ Permite vehicle scopes
+  requires_any_scope: true,     # ✅ Requiere al menos un scope
+  settings: {
+    can_view_assigned_resources: true,
+    can_update_status: true,
+    can_add_notes: true,
+    can_drive_vehicles: true,
+    can_create_trips: true,
+    can_view_own_reports: true,
+    access_level: 'vehicle_based'
+  }
+).find_or_create_by!(slug: 'tenant_driver')
+puts "    ✓ Tenant Driver (requires vehicle scopes)"
+
+# ============================================
+# ROLES ADICIONALES (OPCIONALES/CUSTOM)
+# ============================================
+
+puts "\n  Additional Custom Roles:"
+
+tenant_viewer_role = Role.create_with(
+  name: 'Tenant Viewer',
+  description: 'Read-only access to assigned organizational nodes. Can view reports and dashboards but cannot make changes. Ideal for stakeholders and auditors.',
+  context: 'tenant',
+  is_system: false,
+  priority: 40,
+  # 🆕 NUEVOS CAMPOS: Viewer requiere NODE scopes (solo lectura)
+  allows_node_scope: true,
+  allows_vehicle_scope: false,
+  requires_any_scope: true,
+  settings: {
+    read_only: true,
+    can_view_reports: true,
+    can_export_reports: true,
+    can_view_dashboards: true,
+    access_level: 'node_based_readonly'
+  }
+).find_or_create_by!(slug: 'tenant_viewer')
+puts "    ✓ Tenant Viewer (requires node scopes - read only)"
+
+fleet_coordinator_role = Role.create_with(
+  name: 'Fleet Coordinator',
+  description: 'Specialized role for vehicle fleet management within assigned nodes. Can manage vehicles, maintenance schedules, and driver assignments.',
+  context: 'tenant',
+  is_system: false,
+  priority: 25,
+  # 🆕 NUEVOS CAMPOS: Fleet Coordinator requiere NODE scopes
+  # (gestiona vehículos dentro de nodos, no vehículos individuales)
+  allows_node_scope: true,
+  allows_vehicle_scope: false,
+  requires_any_scope: true,
+  settings: {
+    can_manage_vehicles: true,
+    can_schedule_maintenance: true,
+    can_assign_drivers: true,
+    can_view_vehicle_reports: true,
+    can_manage_fleet_assignments: true,
+    access_level: 'node_based'
+  }
+).find_or_create_by!(slug: 'fleet_coordinator')
+puts "    ✓ Fleet Coordinator (requires node scopes)"
+
+# 🆕 NUEVO ROL OPCIONAL: Operador (multi-scope teórico, comentado por ahora)
+# Descomentar si en el futuro se necesita un rol que maneje AMBOS tipos de scope
+# (requeriría cambiar la validación de exclusividad en Scopeable)
+=begin
+operator_role = Role.create_with(
+  name: 'Tenant Operator',
+  description: 'Hybrid operational role with access to both nodes and vehicles.',
+  context: 'tenant',
+  is_system: false,
+  priority: 35,
+  allows_node_scope: true,
+  allows_vehicle_scope: true,
+  requires_any_scope: true,
+  settings: {
+    can_operate_vehicles: true,
+    can_manage_node_operations: true,
+    access_level: 'hybrid'
+  }
+).find_or_create_by!(slug: 'tenant_operator')
+puts "    ✓ Tenant Operator (requires node OR vehicle scopes)"
+=end
+
+# ============================================
+# ACTUALIZAR ROLES EXISTENTES (Si ya existen)
+# ============================================
+
+puts "\n  Updating existing roles with scope flags..."
+
+# Actualizar roles existentes que no tienen los nuevos campos
+Role.where(allows_node_scope: nil).find_each do |role|
+  case role.slug
+  when 'super_admin', 'support_admin', 'tenant_admin'
+    role.update!(
+      allows_node_scope: false,
+      allows_vehicle_scope: false,
+      requires_any_scope: false
+    )
+  when 'tenant_manager', 'tenant_viewer', 'fleet_coordinator'
+    role.update!(
+      allows_node_scope: true,
+      allows_vehicle_scope: false,
+      requires_any_scope: true
+    )
+  when 'tenant_driver'
+    role.update!(
+      allows_node_scope: false,
+      allows_vehicle_scope: true,
+      requires_any_scope: true
+    )
+  else
+    # Roles custom sin configuración: por defecto sin scopes
+    puts "    ⚠️  Custom role '#{role.name}' needs manual scope configuration"
+  end
+end
+
+# ============================================
+# RESUMEN
+# ============================================
+
+puts "\n  📊 Roles Summary:"
+puts "    - Total Roles: #{Role.count}"
+puts "    - Platform Roles: #{Role.platform_roles.count}"
+puts "    - Tenant Roles: #{Role.tenant_roles.count}"
+puts "    - System Roles: #{Role.system_roles.count}"
+puts "    - Custom Roles: #{Role.custom_roles.count}"
+
+puts "\n  🎯 Scope Distribution:"
+puts "    - Roles requiring scopes: #{Role.with_scope_requirements.count}"
+puts "    - Roles without scopes: #{Role.without_scope_requirements.count}"
+puts "    - Node scope roles: #{Role.requiring_node_scopes.count}"
+puts "    - Vehicle scope roles: #{Role.requiring_vehicle_scopes.count}"
+
+puts "\n  📋 Role Details:"
+Role.by_priority.each do |role|
+  scope_info = if role.requires_any_scope?
+    scope_type = role.allows_node_scope? ? "node" : "vehicle"
+    " [requires #{scope_type} scope]"
+  else
+    " [no scopes - full access]"
+  end
+
+  system_text = role.is_system? ? " (SYSTEM)" : " (CUSTOM)"
+
+  puts "    #{role.priority}. #{role.name} (#{role.context})#{scope_info}#{system_text}"
+end
+
+# ============================================
+# VALIDACIÓN FINAL
+# ============================================
+
+puts "\n  ✅ Validation:"
+
+# Verificar que todos los roles tienen los campos de scope configurados
+invalid_roles = Role.where(allows_node_scope: nil)
+                   .or(Role.where(allows_vehicle_scope: nil))
+                   .or(Role.where(requires_any_scope: nil))
+
+if invalid_roles.any?
+  puts "    ⚠️  WARNING: #{invalid_roles.count} roles with missing scope configuration:"
+  invalid_roles.each do |role|
+    puts "       - #{role.name} (#{role.slug})"
+  end
+else
+  puts "    ✓ All roles have valid scope configuration"
+end
+
+# Verificar que roles que requieren scopes tienen al menos un allow
+invalid_requirements = Role.where(requires_any_scope: true)
+                          .where(allows_node_scope: false, allows_vehicle_scope: false)
+
+if invalid_requirements.any?
+  puts "    ❌ ERROR: #{invalid_requirements.count} roles require scopes but don't allow any type:"
+  invalid_requirements.each do |role|
+    puts "       - #{role.name} (#{role.slug})"
+  end
+else
+  puts "    ✓ All roles with scope requirements are properly configured"
+end
+
+# Verificar exclusividad (un rol no puede permitir ambos tipos según tu modelo)
+# Si decides permitir roles híbridos en el futuro, comenta esta validación
+both_scopes = Role.where(allows_node_scope: true, allows_vehicle_scope: true)
+if both_scopes.any?
+  puts "    ⚠️  WARNING: #{both_scopes.count} roles allow both scope types (hybrid roles):"
+  both_scopes.each do |role|
+    puts "       - #{role.name} (#{role.slug})"
+  end
+end
+
+puts "\n✅ Roles seed completed!"
+
+# db/seeds/02_users.rb
+# Usuarios base del sistema con diferentes estados
+
+puts "\n👥 Creating Base Users..."
+
+# Configuración
+DEFAULT_PASSWORD = 'Password123!'
+
+# ============================================
+# USUARIOS VERIFICADOS (ACTIVOS)
+# ============================================
+
+puts "\n  Active & Verified Users:"
+
+john = User.create_with(
+  first_name: 'John',
+  last_name: 'Doe',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  phone: '+34600000001',
+  email_verified_at: 2.months.ago,
+  last_login_at: 1.day.ago,
+  avatar_url: 'https://ui-avatars.com/api/?name=John+Doe'
+).find_or_create_by!(email: 'john.doe@example.com')
+puts "    ✓ john.doe@example.com (verified, active)"
+
+jane = User.create_with(
+  first_name: 'Jane',
+  last_name: 'Smith',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  phone: '+34600000002',
+  email_verified_at: 1.month.ago,
+  last_login_at: 2.hours.ago,
+  avatar_url: 'https://ui-avatars.com/api/?name=Jane+Smith'
+).find_or_create_by!(email: 'jane.smith@example.com')
+puts "    ✓ jane.smith@example.com (verified, active)"
+
+carlos = User.create_with(
+  first_name: 'Carlos',
+  last_name: 'García',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  phone: '+34600000003',
+  email_verified_at: 3.weeks.ago,
+  last_login_at: 5.days.ago,
+  avatar_url: 'https://ui-avatars.com/api/?name=Carlos+Garcia'
+).find_or_create_by!(email: 'carlos.garcia@example.com')
+puts "    ✓ carlos.garcia@example.com (verified, active)"
+
+# ============================================
+# USUARIOS NO VERIFICADOS
+# ============================================
+
+puts "\n  Unverified Users:"
+
+unverified1 = User.create_with(
+  first_name: 'María',
+  last_name: 'López',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  phone: '+34600000004',
+  email_verified_at: nil
+).find_or_create_by!(email: 'maria.lopez@example.com')
+puts "    ✓ maria.lopez@example.com (NOT verified)"
+
+unverified2 = User.create_with(
+  first_name: 'Pedro',
+  last_name: 'Martínez',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  phone: '+34600000005',
+  email_verified_at: nil
+).find_or_create_by!(email: 'pedro.martinez@example.com')
+puts "    ✓ pedro.martinez@example.com (NOT verified)"
+
+# ============================================
+# USUARIOS CON INVITACIÓN PENDIENTE
+# ============================================
+
+puts "\n  Users with Pending Invitations:"
+
+invited1 = User.create_with(
+  first_name: 'Ana',
+  last_name: 'Rodríguez',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  invitation_token: SecureRandom.hex(32),
+  invitation_expires_at: 7.days.from_now,
+  invited_by: john
+).find_or_create_by!(email: 'ana.rodriguez@example.com')
+puts "    ✓ ana.rodriguez@example.com (invitation pending)"
+
+invited2 = User.create_with(
+  first_name: 'Luis',
+  last_name: 'Fernández',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  invitation_token: SecureRandom.hex(32),
+  invitation_expires_at: 5.days.from_now,
+  invited_by: jane
+).find_or_create_by!(email: 'luis.fernandez@example.com')
+puts "    ✓ luis.fernandez@example.com (invitation pending)"
+
+# ============================================
+# USUARIOS CON INVITACIÓN EXPIRADA
+# ============================================
+
+puts "\n  Users with Expired Invitations:"
+
+expired_invite = User.create_with(
+  first_name: 'Expired',
+  last_name: 'Invitation',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  invitation_token: SecureRandom.hex(32),
+  invitation_expires_at: 10.days.ago,
+  invited_by: john
+).find_or_create_by!(email: 'expired@example.com')
+puts "    ✓ expired@example.com (invitation EXPIRED)"
+
+# ============================================
+# USUARIOS CON INVITACIÓN ACEPTADA
+# ============================================
+
+puts "\n  Users with Accepted Invitations:"
+
+accepted = User.create_with(
+  first_name: 'Accepted',
+  last_name: 'User',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  email_verified_at: 1.week.ago,
+  invitation_accepted_at: 1.week.ago,
+  invited_by: john
+).find_or_create_by!(email: 'accepted@example.com')
+puts "    ✓ accepted@example.com (invitation accepted)"
+
+# ============================================
+# USUARIO BLOQUEADO (LOCKED)
+# ============================================
+
+puts "\n  Locked Users:"
+
+locked_user = User.create_with(
+  first_name: 'Locked',
+  last_name: 'User',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  email_verified_at: 2.months.ago,
+  failed_attempts: 5,
+  locked_at: 1.day.ago
+).find_or_create_by!(email: 'locked@example.com')
+puts "    ✓ locked@example.com (account LOCKED)"
+
+# ============================================
+# USUARIO SOFT DELETED
+# ============================================
+
+puts "\n  Soft Deleted Users:"
+
+deleted_user = User.create_with(
+  first_name: 'Deleted',
+  last_name: 'User',
+  password: DEFAULT_PASSWORD,
+  password_confirmation: DEFAULT_PASSWORD,
+  email_verified_at: 3.months.ago,
+  deleted_at: 1.week.ago,
+  deleted_by: john.id
+).find_or_create_by!(email: 'deleted@example.com')
+puts "    ✓ deleted@example.com (soft DELETED)"
+
+# ============================================
+# USUARIOS ADICIONALES PARA VARIEDAD
+# ============================================
+
+puts "\n  Additional Test Users:"
+
+[
+  { first: 'Laura', last: 'Sánchez', email: 'laura.sanchez@example.com' },
+  { first: 'Miguel', last: 'Torres', email: 'miguel.torres@example.com' },
+  { first: 'Isabel', last: 'Ramírez', email: 'isabel.ramirez@example.com' },
+  { first: 'David', last: 'Moreno', email: 'david.moreno@example.com' },
+  { first: 'Carmen', last: 'Jiménez', email: 'carmen.jimenez@example.com' }
+].each_with_index do |user_data, index|
+  User.create_with(
+    first_name: user_data[:first],
+    last_name: user_data[:last],
+    password: DEFAULT_PASSWORD,
+    password_confirmation: DEFAULT_PASSWORD,
+    phone: "+3460000#{1010 + index}",
+    email_verified_at: rand(1..60).days.ago,
+    last_login_at: rand(1..10).days.ago
+  ).find_or_create_by!(email: user_data[:email])
+  puts "    ✓ #{user_data[:email]}"
+end
+
+# ============================================
+# RESUMEN
+# ============================================
+
+puts "\n  📊 Users Summary:"
+puts "    - Total Users: #{User.count}"
+puts "    - Verified: #{User.verified.count}"
+puts "    - Unverified: #{User.unverified.count}"
+puts "    - Pending Invitations: #{User.pending_invitation.count}"
+puts "    - Accepted Invitations: #{User.invitation_accepted.count}"
+puts "    - Locked: #{User.where.not(locked_at: nil).count}"
+puts "    - Soft Deleted: #{User.discarded.count}"
+puts "    - Active: #{User.kept.count}"
+
+puts "\n  🔐 Login Credentials:"
+puts "    Email: [any-user]@example.com"
+puts "    Password: #{DEFAULT_PASSWORD}"
+
+# db/seeds/03_platform_admins.rb
+# Platform admins con diferentes configuraciones
+
+puts "\n🛡️ Creating Platform Admins..."
+
+# Roles
+super_admin_role = Role.find_by!(slug: 'super_admin')
+support_admin_role = Role.find_by!(slug: 'support_admin')
+
+# ============================================
+# SUPER ADMIN PRINCIPAL
+# ============================================
+
+puts "\n  Super Admins:"
+
+super_admin_email = ENV.fetch('SUPER_ADMIN_EMAIL', 'superadmin@saasplatform.com')
+super_admin = User.create_with(
+  first_name: ENV.fetch('SUPER_ADMIN_FIRST_NAME', 'Super'),
+  last_name: ENV.fetch('SUPER_ADMIN_LAST_NAME', 'Admin'),
+  password: ENV.fetch('SUPER_ADMIN_PASSWORD', 'SuperAdmin123!'),
+  password_confirmation: ENV.fetch('SUPER_ADMIN_PASSWORD', 'SuperAdmin123!'),
+  phone: '+34900000000',
+  email_verified_at: 6.months.ago,
+  last_login_at: 1.hour.ago,
+  avatar_url: 'https://ui-avatars.com/api/?name=Super+Admin&background=dc2626&color=fff'
+).find_or_create_by!(email: super_admin_email)
+
+PlatformMembership.create_with(
+  role: super_admin_role,
+  context: 'platform',
+  mfa_enabled: true,
+  mfa_configured_at: 6.months.ago,
+  can_impersonate: true,
+  allowed_ips: []
+).find_or_create_by!(user: super_admin)
+
+puts "    ✓ #{super_admin_email}"
+puts "      - MFA: Enabled"
+puts "      - Can Impersonate: Yes"
+puts "      - Password: #{ENV.fetch('SUPER_ADMIN_PASSWORD', 'SuperAdmin123!')}"
+
+# ============================================
+# SUPER ADMIN SECUNDARIO
+# ============================================
+
+secondary_super = User.create_with(
+  first_name: 'Secondary',
+  last_name: 'SuperAdmin',
+  password: 'SecondaryAdmin123!',
+  password_confirmation: 'SecondaryAdmin123!',
+  phone: '+34900000001',
+  email_verified_at: 3.months.ago,
+  last_login_at: 1.week.ago
+).find_or_create_by!(email: 'secondary.superadmin@saasplatform.com')
+
+PlatformMembership.create_with(
+  role: super_admin_role,
+  context: 'platform',
+  mfa_enabled: false,
+  can_impersonate: false
+).find_or_create_by!(user: secondary_super)
+
+puts "    ✓ secondary.superadmin@saasplatform.com"
+puts "      - MFA: Disabled"
+puts "      - Can Impersonate: No"
+
+# ============================================
+# SUPPORT ADMINS
+# ============================================
+
+puts "\n  Support Admins:"
+
+# Support Admin 1 - Con MFA y capacidad de impersonación
+support1 = User.create_with(
+  first_name: 'Support',
+  last_name: 'Admin',
+  password: 'SupportAdmin123!',
+  password_confirmation: 'SupportAdmin123!',
+  phone: '+34900001000',
+  email_verified_at: 4.months.ago,
+  last_login_at: 2.days.ago,
+  avatar_url: 'https://ui-avatars.com/api/?name=Support+Admin&background=2563eb&color=fff'
+).find_or_create_by!(email: 'support@saasplatform.com')
+
+PlatformMembership.create_with(
+  role: support_admin_role,
+  context: 'platform',
+  mfa_enabled: true,
+  mfa_configured_at: 4.months.ago,
+  can_impersonate: true,
+  last_impersonation_at: 5.days.ago
+).find_or_create_by!(user: support1)
+
+puts "    ✓ support@saasplatform.com"
+puts "      - MFA: Enabled (required)"
+puts "      - Can Impersonate: Yes"
+puts "      - Last Impersonation: 5 days ago"
+
+# Support Admin 2 - Sin capacidad de impersonación
+support2 = User.create_with(
+  first_name: 'Junior',
+  last_name: 'Support',
+  password: 'JuniorSupport123!',
+  password_confirmation: 'JuniorSupport123!',
+  phone: '+34900001001',
+  email_verified_at: 1.month.ago,
+  last_login_at: 12.hours.ago
+).find_or_create_by!(email: 'junior.support@saasplatform.com')
+
+PlatformMembership.create_with(
+  role: support_admin_role,
+  context: 'platform',
+  mfa_enabled: true,
+  mfa_configured_at: 1.month.ago,
+  can_impersonate: false
+).find_or_create_by!(user: support2)
+
+puts "    ✓ junior.support@saasplatform.com"
+puts "      - MFA: Enabled (required)"
+puts "      - Can Impersonate: No"
+
+# Support Admin 3 - Con IPs permitidas
+support3 = User.create_with(
+  first_name: 'Restricted',
+  last_name: 'Support',
+  password: 'RestrictedSupport123!',
+  password_confirmation: 'RestrictedSupport123!',
+  phone: '+34900001002',
+  email_verified_at: 2.months.ago,
+  last_login_at: 1.day.ago
+).find_or_create_by!(email: 'restricted.support@saasplatform.com')
+
+PlatformMembership.create_with(
+  role: support_admin_role,
+  context: 'platform',
+  mfa_enabled: true,
+  mfa_configured_at: 2.months.ago,
+  can_impersonate: true,
+  allowed_ips: [ '192.168.1.100', '10.0.0.50' ]
+).find_or_create_by!(user: support3)
+
+puts "    ✓ restricted.support@saasplatform.com"
+puts "      - MFA: Enabled"
+puts "      - Can Impersonate: Yes"
+puts "      - Allowed IPs: 192.168.1.100, 10.0.0.50"
+
+# ============================================
+# RESUMEN
+# ============================================
+
+puts "\n  📊 Platform Admins Summary:"
+puts "    - Total Platform Memberships: #{PlatformMembership.count}"
+puts "    - Super Admins: #{PlatformMembership.super_admins.count}"
+puts "    - Support Admins: #{PlatformMembership.support_admins.count}"
+puts "    - With MFA Enabled: #{PlatformMembership.with_mfa.count}"
+puts "    - Can Impersonate: #{PlatformMembership.can_impersonate.count}"
+
+puts "\n  🔑 Platform Admin Credentials:"
+puts "    1. Super Admin:"
+puts "       - Email: #{super_admin_email}"
+puts "       - Password: #{ENV.fetch('SUPER_ADMIN_PASSWORD', 'SuperAdmin123!')}"
+puts "    2. Support Admin:"
+puts "       - Email: support@saasplatform.com"
+puts "       - Password: SupportAdmin123!"
+puts "    3. Junior Support:"
+puts "       - Email: junior.support@saasplatform.com"
+puts "       - Password: JuniorSupport123!"
+
+# db/seeds/04_tenants.rb
+# Tenants con diferentes estados, planes y membresías con roles correctamente asignados
+
+puts "\n🏢 Creating Tenants..."
+
+# Roles
+admin_role = Role.find_by!(slug: 'tenant_admin')
+manager_role = Role.find_by!(slug: 'tenant_manager')
+driver_role = Role.find_by!(slug: 'tenant_driver')
+viewer_role = Role.find_by(slug: 'tenant_viewer')
+coordinator_role = Role.find_by(slug: 'fleet_coordinator')
+
+# Usuarios existentes para agregar a tenants
+john = User.find_by(email: 'john.doe@example.com')
+jane = User.find_by(email: 'jane.smith@example.com')
+carlos = User.find_by(email: 'carlos.garcia@example.com')
+
+# ============================================
+# HELPER PARA CREAR MEMBRESÍAS
+# ============================================
+
+def create_tenant_membership(user, tenant, role, options = {})
+  defaults = {
+    status: 'active',
+    created_by: options[:created_by],
+    is_primary_admin: options[:is_primary_admin] || false,
+    is_default: options[:is_default] || false
+  }
+
+  TenantMembership.create_with(defaults.merge(role: role))
+    .find_or_create_by!(user: user, tenant: tenant)
+end
+
+# ============================================
+# TENANT 1: TRIAL (Acme Corp)
+# ============================================
+
+puts "\n  Creating Trial Tenant:"
+
+acme = Tenant.create_with(
+  name: 'Acme Corporation',
+  legal_name: 'Acme Corporation S.L.',
+  tax_id: 'B12345678',
+  domain: 'acme.example.com',
+  address: 'Calle Mayor 123',
+  city: 'Madrid',
+  state: 'Madrid',
+  postal_code: '28013',
+  country: 'ES',
+  timezone: 'Europe/Madrid',
+  locale: 'es',
+  currency: 'EUR',
+  status: 'trial',
+  plan: 'trial',
+  trial_ends_at: 20.days.from_now,
+  max_users: 5,
+  max_storage_gb: 10,
+  settings: {
+    features_enabled: %w[fleet_management basic_reporting],
+    notifications_enabled: true,
+    theme: 'light'
+  },
+  metadata: {
+    industry: 'logistics',
+    company_size: 'small',
+    onboarding_completed: false
+  }
+).find_or_create_by!(slug: 'acme-corp')
+
+puts "    ✓ Acme Corporation (TRIAL - expires in 20 days)"
+
+# ============ ADMIN PRINCIPAL (Acme) ============
+acme_admin = User.create_with(
+  first_name: 'María',
+  last_name: 'García',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600111111',
+  email_verified_at: Time.current
+).find_or_create_by!(email: 'maria.garcia@acme.com')
+
+create_tenant_membership(
+  acme_admin, acme, admin_role,
+  created_by: acme_admin.id,
+  is_primary_admin: true,
+  is_default: true
+)
+puts "      Admin: maria.garcia@acme.com"
+
+# ============ MANAGER (Acme) ============
+acme_manager = User.create_with(
+  first_name: 'Carlos',
+  last_name: 'López',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600111112',
+  email_verified_at: Time.current
+).find_or_create_by!(email: 'carlos.lopez@acme.com')
+
+create_tenant_membership(
+  acme_manager, acme, manager_role,
+  created_by: acme_admin.id
+)
+puts "      Manager: carlos.lopez@acme.com"
+
+# ============ DRIVER (Acme - invitado) ============
+acme_driver = User.create_with(
+  first_name: 'Ana',
+  last_name: 'Rodríguez',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600111113'
+).find_or_create_by!(email: 'ana.rodriguez@acme.com')
+
+TenantMembership.create_with(
+  tenant: acme,
+  role: driver_role,
+  status: 'invited',
+  invitation_token: SecureRandom.hex(32),
+  invitation_sent_at: 2.days.ago,
+  created_by: acme_admin.id
+).find_or_create_by!(user: acme_driver)
+puts "      Driver: ana.rodriguez@acme.com (INVITED - pending)"
+
+# ============================================
+# TENANT 2: ACTIVE - BASIC PLAN
+# ============================================
+
+puts "\n  Creating Active Tenant (Basic Plan):"
+
+techstart = Tenant.create_with(
+  name: 'Tech Startup Inc',
+  legal_name: 'Tech Startup Inc.',
+  tax_id: 'B87654321',
+  domain: 'techstartup.example.com',
+  address: 'Passeig de Gràcia 100',
+  city: 'Barcelona',
+  state: 'Catalonia',
+  postal_code: '08008',
+  country: 'ES',
+  timezone: 'Europe/Madrid',
+  locale: 'ca',
+  currency: 'EUR',
+  status: 'active',
+  plan: 'basic',
+  subscription_starts_at: 3.months.ago,
+  subscription_ends_at: 9.months.from_now,
+  max_users: 10,
+  max_storage_gb: 50,
+  settings: {
+    features_enabled: %w[fleet_management advanced_reporting api_access],
+    notifications_enabled: true,
+    theme: 'dark'
+  }
+).find_or_create_by!(slug: 'tech-startup')
+
+puts "    ✓ Tech Startup Inc (ACTIVE - Basic Plan)"
+
+# ============ ADMIN (Tech Startup) ============
+tech_admin = User.create_with(
+  first_name: 'Joan',
+  last_name: 'Martínez',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600222222',
+  email_verified_at: 3.months.ago
+).find_or_create_by!(email: 'joan.martinez@techstartup.com')
+
+create_tenant_membership(
+  tech_admin, techstart, admin_role,
+  created_by: tech_admin.id,
+  is_primary_admin: true,
+  is_default: true
+)
+puts "      Admin: joan.martinez@techstartup.com"
+
+# ============ MANAGER (Tech Startup) ============
+tech_manager = User.create_with(
+  first_name: 'Anna',
+  last_name: 'Puig',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600222223',
+  email_verified_at: 2.months.ago
+).find_or_create_by!(email: 'anna.puig@techstartup.com')
+
+create_tenant_membership(
+  tech_manager, techstart, manager_role,
+  created_by: tech_admin.id
+)
+puts "      Manager: anna.puig@techstartup.com"
+
+# ============ DRIVER (Tech Startup) ============
+tech_driver = User.create_with(
+  first_name: 'Sergi',
+  last_name: 'Rovira',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600222224',
+  email_verified_at: 1.month.ago
+).find_or_create_by!(email: 'sergi.rovira@techstartup.com')
+
+create_tenant_membership(
+  tech_driver, techstart, driver_role,
+  created_by: tech_admin.id
+)
+puts "      Driver: sergi.rovira@techstartup.com"
+
+# ============================================
+# TENANT 3: ACTIVE - PROFESSIONAL PLAN
+# ============================================
+
+puts "\n  Creating Active Tenant (Professional Plan):"
+
+logistics = Tenant.create_with(
+  name: 'Global Logistics Pro',
+  legal_name: 'Global Logistics Pro S.A.',
+  tax_id: 'A11223344',
+  domain: 'globallogistics.example.com',
+  address: 'Avenida Diagonal 500',
+  city: 'Barcelona',
+  state: 'Catalonia',
+  postal_code: '08006',
+  country: 'ES',
+  timezone: 'Europe/Madrid',
+  locale: 'es',
+  currency: 'EUR',
+  status: 'active',
+  plan: 'professional',
+  subscription_starts_at: 1.year.ago,
+  subscription_ends_at: 1.year.from_now,
+  max_users: 50,
+  max_storage_gb: 200,
+  settings: {
+    features_enabled: %w[fleet_management advanced_reporting api_access custom_integrations multi_location],
+    notifications_enabled: true
+  }
+).find_or_create_by!(slug: 'global-logistics')
+
+puts "    ✓ Global Logistics Pro (ACTIVE - Professional Plan)"
+
+# ============ ADMIN PRINCIPAL (Logistics) ============
+logistics_admin = User.create_with(
+  first_name: 'Patricia',
+  last_name: 'Torres',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600333333',
+  email_verified_at: 1.year.ago
+).find_or_create_by!(email: 'patricia.torres@globallogistics.com')
+
+create_tenant_membership(
+  logistics_admin, logistics, admin_role,
+  created_by: logistics_admin.id,
+  is_primary_admin: true,
+  is_default: true
+)
+puts "      Admin: patricia.torres@globallogistics.com"
+
+# ============ FLEET COORDINATOR (Logistics) ============
+if coordinator_role
+  fleet_coord = User.create_with(
+    first_name: 'Jorge',
+    last_name: 'Ruiz',
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: '+34600333334',
+    email_verified_at: 10.months.ago
+  ).find_or_create_by!(email: 'jorge.ruiz@globallogistics.com')
+
+  create_tenant_membership(
+    fleet_coord, logistics, coordinator_role,
+    created_by: logistics_admin.id
+  )
+  puts "      Fleet Coordinator: jorge.ruiz@globallogistics.com"
+end
+
+# ============ MANAGERS - 3 MANAGERS CON DIFERENTES REGIONES ============
+3.times do |i|
+  manager = User.create_with(
+    first_name: %w[David Laura Miguel][i],
+    last_name: %w[Moreno Sánchez Torres][i],
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3460033#{3340 + i}",
+    email_verified_at: rand(1..11).months.ago
+  ).find_or_create_by!(email: "#{%w[david.moreno laura.sanchez miguel.torres][i]}@globallogistics.com")
+
+  create_tenant_membership(
+    manager, logistics, manager_role,
+    created_by: logistics_admin.id
+  )
+end
+puts "      Managers: 3 active"
+
+# ============ DRIVERS - 5 DRIVERS CON ACCESO A VEHÍCULOS ============
+5.times do |i|
+  driver = User.create_with(
+    first_name: "Driver",
+    last_name: "#{i + 1}",
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3460033#{3350 + i}",
+    email_verified_at: rand(1..6).months.ago
+  ).find_or_create_by!(email: "driver#{i + 1}@globallogistics.com")
+
+  create_tenant_membership(
+    driver, logistics, driver_role,
+    created_by: logistics_admin.id
+  )
+end
+puts "      Drivers: 5 active"
+
+# ============ VIEWER - READONLY ACCESS ============
+if viewer_role
+  viewer = User.create_with(
+    first_name: 'Monitor',
+    last_name: 'Analytics',
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: '+34600333366',
+    email_verified_at: 6.months.ago
+  ).find_or_create_by!(email: 'monitor.analytics@globallogistics.com')
+
+  create_tenant_membership(
+    viewer, logistics, viewer_role,
+    created_by: logistics_admin.id
+  )
+  puts "      Viewer: monitor.analytics@globallogistics.com (read-only)"
+end
+
+# ============================================
+# USUARIO CON MÚLTIPLES MEMBRESÍAS (CROSS-TENANT)
+# ============================================
+
+puts "\n  Creating User with Multiple Memberships:"
+
+# Crear usuario que participa en múltiples tenants
+multi_tenant_user = User.create_with(
+  first_name: 'Operativo',
+  last_name: 'Universal',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34600999999',
+  email_verified_at: 5.months.ago
+).find_or_create_by!(email: 'operativo.universal@example.com')
+
+# Manager en Acme
+create_tenant_membership(
+  multi_tenant_user, acme, manager_role,
+  created_by: acme_admin.id
+)
+
+# Driver en Tech Startup
+create_tenant_membership(
+  multi_tenant_user, techstart, driver_role,
+  created_by: tech_admin.id
+)
+
+# Viewer en Logistics
+if viewer_role
+  create_tenant_membership(
+    multi_tenant_user, logistics, viewer_role,
+    created_by: logistics_admin.id
+  )
+end
+
+puts "    ✓ operativo.universal@example.com"
+puts "      - Manager @ Acme Corporation"
+puts "      - Driver @ Tech Startup Inc"
+puts "      - Viewer @ Global Logistics Pro"
+
+# ============================================
+# TENANT 4: SUSPENDED
+# ============================================
+
+puts "\n  Creating Suspended Tenant:"
+
+suspended = Tenant.create_with(
+  name: 'Suspended Company Ltd',
+  legal_name: 'Suspended Company Ltd',
+  tax_id: 'B99887766',
+  address: 'Calle Suspended 999',
+  city: 'Valencia',
+  country: 'ES',
+  timezone: 'Europe/Madrid',
+  locale: 'es',
+  currency: 'EUR',
+  status: 'suspended',
+  plan: 'basic',
+  subscription_starts_at: 6.months.ago,
+  metadata: {
+    suspension_reason: 'Payment overdue',
+    suspended_at: 1.week.ago
+  }
+).find_or_create_by!(slug: 'suspended-company')
+
+suspended_admin = User.create_with(
+  first_name: 'Suspended',
+  last_name: 'Admin',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  email_verified_at: 6.months.ago
+).find_or_create_by!(email: 'admin@suspended.com')
+
+TenantMembership.create_with(
+  tenant: suspended,
+  role: admin_role,
+  status: 'suspended',
+  is_primary_admin: true,
+  created_by: suspended_admin.id
+).find_or_create_by!(user: suspended_admin)
+
+puts "    ✓ Suspended Company Ltd (SUSPENDED - payment issue)"
+
+# ============================================
+# TENANT 5: CANCELLED
+# ============================================
+
+puts "\n  Creating Cancelled Tenant:"
+
+cancelled = Tenant.create_with(
+  name: 'Cancelled Corp',
+  legal_name: 'Cancelled Corp S.L.',
+  tax_id: 'B55443322',
+  country: 'ES',
+  status: 'cancelled',
+  plan: 'trial',
+  subscription_ends_at: 2.weeks.ago,
+  metadata: {
+    cancellation_reason: 'Switched to competitor',
+    cancelled_at: 2.weeks.ago
+  }
+).find_or_create_by!(slug: 'cancelled-corp')
+
+puts "    ✓ Cancelled Corp (CANCELLED - churned)"
+
+# ============================================
+# TENANT 6: ENTERPRISE
+# ============================================
+
+puts "\n  Creating Enterprise Tenant:"
+
+enterprise = Tenant.create_with(
+  name: 'Enterprise Solutions Mega Corp',
+  legal_name: 'Enterprise Solutions International S.A.',
+  tax_id: 'A00112233',
+  domain: 'enterprise.example.com',
+  address: 'Torre Empresarial, Piso 25',
+  city: 'Madrid',
+  state: 'Madrid',
+  postal_code: '28046',
+  country: 'ES',
+  timezone: 'Europe/Madrid',
+  locale: 'es',
+  currency: 'EUR',
+  status: 'active',
+  plan: 'enterprise',
+  subscription_starts_at: 2.years.ago,
+  max_users: 1000,
+  max_storage_gb: 1000,
+  settings: {
+    features_enabled: %w[
+      fleet_management
+      advanced_reporting
+      api_access
+      custom_integrations
+      multi_location
+      white_label
+      priority_support
+      sla_99_9
+    ],
+    custom_domain_enabled: true,
+    sso_enabled: true
+  }
+).find_or_create_by!(slug: 'enterprise-mega')
+
+puts "    ✓ Enterprise Solutions Mega Corp (ACTIVE - Enterprise Plan)"
+
+# ============ ADMIN (Enterprise) ============
+enterprise_admin = User.create_with(
+  first_name: 'Enterprise',
+  last_name: 'Admin',
+  password: 'Password123!',
+  password_confirmation: 'Password123!',
+  phone: '+34900444444',
+  email_verified_at: 2.years.ago
+).find_or_create_by!(email: 'admin@enterprise.com')
+
+create_tenant_membership(
+  enterprise_admin, enterprise, admin_role,
+  created_by: enterprise_admin.id,
+  is_primary_admin: true,
+  is_default: true
+)
+puts "      Admin: admin@enterprise.com"
+
+# ============ MANAGERS (Enterprise - 5 managers) ============
+5.times do |i|
+  manager = User.create_with(
+    first_name: "Regional",
+    last_name: "Manager #{i + 1}",
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3490044#{4440 + i}",
+    email_verified_at: rand(1..24).months.ago
+  ).find_or_create_by!(email: "manager#{i + 1}@enterprise.com")
+
+  create_tenant_membership(
+    manager, enterprise, manager_role,
+    created_by: enterprise_admin.id
+  )
+end
+puts "      Managers: 5 regional managers"
+
+# ============ DRIVERS (Enterprise - 10 drivers) ============
+10.times do |i|
+  driver = User.create_with(
+    first_name: "Enterprise",
+    last_name: "Driver #{i + 1}",
+    password: 'Password123!',
+    password_confirmation: 'Password123!',
+    phone: "+3490044#{4450 + i}",
+    email_verified_at: rand(1..12).months.ago
+  ).find_or_create_by!(email: "enterprise_driver#{i + 1}@enterprise.com")
+
+  create_tenant_membership(
+    driver, enterprise, driver_role,
+    created_by: enterprise_admin.id
+  )
+end
+puts "      Drivers: 10 active"
+
+# ============================================
+# RESUMEN
+# ============================================
+
+puts "\n  📊 Tenants Summary:"
+puts "    - Total Tenants: #{Tenant.count}"
+puts "    - By Status:"
+puts "      - Trial: #{Tenant.trial.count}"
+puts "      - Active: #{Tenant.active.count}"
+puts "      - Suspended: #{Tenant.suspended.count}"
+puts "      - Cancelled: #{Tenant.cancelled.count}"
+puts "    - By Plan:"
+puts "      - Trial: #{Tenant.by_plan('trial').count}"
+puts "      - Basic: #{Tenant.by_plan('basic').count}"
+puts "      - Professional: #{Tenant.by_plan('professional').count}"
+puts "      - Enterprise: #{Tenant.by_plan('enterprise').count}"
+
+puts "\n  👥 Tenant Memberships Summary:"
+puts "    - Total Memberships: #{TenantMembership.count}"
+puts "    - Active: #{TenantMembership.active.count}"
+puts "    - Invited: #{TenantMembership.invited.count}"
+puts "    - Suspended: #{TenantMembership.suspended.count}"
+
+puts "\n  👤 Users with Multiple Memberships:"
+User.joins(:tenant_memberships)
+  .select('users.*, COUNT(tenant_memberships.id) as membership_count')
+  .group('users.id')
+  .having('COUNT(tenant_memberships.id) > 1')
+  .order('membership_count DESC')
+  .each do |user|
+    puts "    #{user.email}: #{user.membership_count} tenants"
+  end
+
+puts "\n  🏢 Tenant Access Info:"
+Tenant.active.each do |tenant|
+  primary_admin = tenant.primary_admin
+  puts "    #{tenant.name} (#{tenant.plan})"
+  puts "      Admin: #{primary_admin&.email || 'N/A'}"
+  puts "      Members: #{tenant.active_memberships.count}/#{tenant.max_users}"
+  puts "      - Admins: #{tenant.tenant_memberships.where(role: admin_role).active.count}"
+  puts "      - Managers: #{tenant.tenant_memberships.where(role: manager_role).active.count}"
+  puts "      - Drivers: #{tenant.tenant_memberships.where(role: driver_role).active.count}"
+  if viewer_role
+    puts "      - Viewers: #{tenant.tenant_memberships.where(role: viewer_role).active.count}"
+  end
+end
+
+# db/seeds/05_organizational_structure.rb
+# Estructura organizacional jerárquica para tenants
+
+puts "\n🌳 Creating Organizational Structure..."
+
+# Solo crear estructura para tenants activos
+active_tenants = [
+  Tenant.find_by(slug: 'tech-startup'),
+  Tenant.find_by(slug: 'global-logistics'),
+  Tenant.find_by(slug: 'enterprise-mega')
+].compact
+
+active_tenants.each do |tenant|
+  puts "\n  Creating structure for: #{tenant.name}"
+
+  ActsAsTenant.with_tenant(tenant) do
+    # ============================================
+    # NIVELES ORGANIZACIONALES
+    # ============================================
+
+    company_level = OrganizationalNodeLevel.create_with(
+      name: 'Company',
+      description: 'Top level organizational unit',
+      level_order: 1,
+      allows_vehicles: false,
+      allows_users: true,
+      is_system: true
+    ).find_or_create_by!(tenant: tenant, slug: 'company')
+
+    region_level = OrganizationalNodeLevel.create_with(
+      name: 'Region',
+      description: 'Geographic regions',
+      level_order: 2,
+      allows_vehicles: false,
+      allows_users: true,
+      is_system: true
+    ).find_or_create_by!(tenant: tenant, slug: 'region')
+
+    branch_level = OrganizationalNodeLevel.create_with(
+      name: 'Branch',
+      description: 'Physical locations or branches',
+      level_order: 3,
+      allows_vehicles: true,
+      allows_users: true,
+      is_system: true
+    ).find_or_create_by!(tenant: tenant, slug: 'branch')
+
+    department_level = OrganizationalNodeLevel.create_with(
+      name: 'Department',
+      description: 'Departments within branches',
+      level_order: 4,
+      allows_vehicles: false,
+      allows_users: true,
+      is_system: true
+    ).find_or_create_by!(tenant: tenant, slug: 'department')
+
+    puts "    ✓ Created 4 organizational levels"
+
+    # ============================================
+    # NODOS - DEPENDE DEL TENANT
+    # ============================================
+
+    case tenant.slug
+    when 'tech-startup'
+      # Estructura simple para startup
+      company = OrganizationalNode.create_with(
+        level: company_level,
+        name: "#{tenant.name} HQ",
+        code: 'HQ',
+        status: 'active',
+        city: tenant.city,
+        country: tenant.country
+      ).find_or_create_by!(tenant: tenant, parent: nil)
+
+      barcelona = OrganizationalNode.create_with(
+        level: branch_level,
+        name: 'Barcelona Office',
+        code: 'BCN',
+        status: 'active',
+        address: tenant.address,
+        city: 'Barcelona',
+        country: 'ES'
+      ).find_or_create_by!(tenant: tenant, parent: company)
+
+      puts "    ✓ Created 2 nodes (simple structure)"
+
+    when 'global-logistics'
+      # Estructura compleja para logistics
+      company = OrganizationalNode.create_with(
+        level: company_level,
+        name: "#{tenant.name} Central",
+        code: 'CENTRAL',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: nil)
+
+      # Regiones
+      north = OrganizationalNode.create_with(
+        level: region_level,
+        name: 'Northern Region',
+        code: 'REGION-N',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: company)
+
+      south = OrganizationalNode.create_with(
+        level: region_level,
+        name: 'Southern Region',
+        code: 'REGION-S',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: company)
+
+      east = OrganizationalNode.create_with(
+        level: region_level,
+        name: 'Eastern Region',
+        code: 'REGION-E',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: company)
+
+      # Sucursales Norte
+      bcn = OrganizationalNode.create_with(
+        level: branch_level,
+        name: 'Barcelona Hub',
+        code: 'BCN-01',
+        status: 'active',
+        city: 'Barcelona',
+        country: 'ES'
+      ).find_or_create_by!(tenant: tenant, parent: north)
+
+      girona = OrganizationalNode.create_with(
+        level: branch_level,
+        name: 'Girona Branch',
+        code: 'GRO-01',
+        status: 'active',
+        city: 'Girona',
+        country: 'ES'
+      ).find_or_create_by!(tenant: tenant, parent: north)
+
+      # Sucursales Sur
+      valencia = OrganizationalNode.create_with(
+        level: branch_level,
+        name: 'Valencia Hub',
+        code: 'VLC-01',
+        status: 'active',
+        city: 'Valencia',
+        country: 'ES'
+      ).find_or_create_by!(tenant: tenant, parent: south)
+
+      alicante = OrganizationalNode.create_with(
+        level: branch_level,
+        name: 'Alicante Branch',
+        code: 'ALC-01',
+        status: 'active',
+        city: 'Alicante',
+        country: 'ES'
+      ).find_or_create_by!(tenant: tenant, parent: south)
+
+      # Sucursales Este
+      tarragona = OrganizationalNode.create_with(
+        level: branch_level,
+        name: 'Tarragona Branch',
+        code: 'TGN-01',
+        status: 'active',
+        city: 'Tarragona',
+        country: 'ES'
+      ).find_or_create_by!(tenant: tenant, parent: east)
+
+      # Departamentos en Barcelona
+      sales = OrganizationalNode.create_with(
+        level: department_level,
+        name: 'Sales Department',
+        code: 'BCN-SALES',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: bcn)
+
+      logistics_dept = OrganizationalNode.create_with(
+        level: department_level,
+        name: 'Logistics Department',
+        code: 'BCN-LOG',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: bcn)
+
+      support = OrganizationalNode.create_with(
+        level: department_level,
+        name: 'Customer Support',
+        code: 'BCN-SUP',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: bcn)
+
+      puts "    ✓ Created 13 nodes (complex hierarchy)"
+
+    when 'enterprise-mega'
+      # Estructura enterprise muy completa
+      company = OrganizationalNode.create_with(
+        level: company_level,
+        name: "#{tenant.name}",
+        code: 'CORP',
+        status: 'active'
+      ).find_or_create_by!(tenant: tenant, parent: nil)
+
+      # 4 Regiones
+      [ 'North', 'South', 'East', 'West' ].each_with_index do |region_name, idx|
+        region = OrganizationalNode.create_with(
+          level: region_level,
+          name: "#{region_name} Region",
+          code: "REG-#{region_name[0]}",
+          status: 'active'
+        ).find_or_create_by!(tenant: tenant, parent: company)
+
+        # 2 sucursales por región
+        2.times do |branch_idx|
+          OrganizationalNode.create_with(
+            level: branch_level,
+            name: "#{region_name} Branch #{branch_idx + 1}",
+            code: "#{region_name[0]}-BR#{branch_idx + 1}",
+            status: 'active',
+            country: 'ES'
+          ).find_or_create_by!(tenant: tenant, parent: region)
+        end
+      end
+
+      puts "    ✓ Created 13 nodes (enterprise structure)"
+    end
+
+    # Verificar closure table
+    node_count = OrganizationalNode.where(tenant: tenant).count
+    closure_count = OrganizationalNodeClosure.joins(:ancestor)
+      .where(organizational_nodes: { tenant_id: tenant.id }).count
+
+    puts "    ✓ Closure table: #{closure_count} records for #{node_count} nodes"
+  end
+end
+
+# ============================================
+# RESUMEN
+# ============================================
+
+puts "\n  📊 Organizational Structure Summary:"
+
+# CORRECCIÓN: Usar without_tenant para queries globales
+ActsAsTenant.without_tenant do
+  total_levels = OrganizationalNodeLevel.unscoped.count
+  total_nodes = OrganizationalNode.unscoped.count
+  total_closures = OrganizationalNodeClosure.unscoped.count
+
+  puts "    - Total Levels: #{total_levels}"
+  puts "    - Total Nodes: #{total_nodes}"
+  puts "    - Total Closures: #{total_closures}"
+
+  # Distribución de nodos por nivel
+  puts "\n    - Nodes by Level:"
+  OrganizationalNode.unscoped
+    .joins(:level)
+    .select('organizational_node_levels.name, organizational_node_levels.level_order, COUNT(*) as node_count')
+    .group('organizational_node_levels.name', 'organizational_node_levels.level_order')
+    .order('organizational_node_levels.level_order')
+    .each do |result|
+      puts "      - #{result.name}: #{result.node_count}"
+    end
+end
+
+puts "\n  🏢 Structure by Tenant:"
+active_tenants.each do |tenant|
+  ActsAsTenant.with_tenant(tenant) do
+    node_count = OrganizationalNode.count
+    root_count = OrganizationalNode.roots.count
+
+    # Calcular profundidad máxima
+    max_depth = OrganizationalNodeClosure.maximum(:depth) || 0
+
+    puts "    #{tenant.name}:"
+    puts "      - Nodes: #{node_count}"
+    puts "      - Roots: #{root_count}"
+    puts "      - Max Depth: #{max_depth}"
+
+    # Mostrar jerarquía simple
+    OrganizationalNode.roots.first(2).each do |root|
+      puts "      - #{root.name}"
+      root.children.limit(3).each do |child|
+        puts "        └─ #{child.name}"
+      end
+    end
+  end
+end
+
+puts "\n  ✅ Organizational structure created successfully!"
 
 # db/seeds/06_vehicles.rb
-# Vehículos de flota con diferentes estados y configuraciones
+# Vehículos con datos enriquecidos y variedad de estados
 
 puts "\n🚗 Creating Vehicles..."
 
-# Solo para tenants con estructura organizacional
 tenants_with_vehicles = [
   Tenant.find_by(slug: 'tech-startup'),
   Tenant.find_by(slug: 'global-logistics'),
   Tenant.find_by(slug: 'enterprise-mega')
 ].compact
 
-# Marcas y modelos comunes
-VEHICLE_DATA = {
+# ============================================
+# DATOS DE VEHÍCULOS EXTENDIDO
+# ============================================
+
+VEHICLE_CATALOG = {
   car: {
-    makes: [ 'Toyota', 'Volkswagen', 'Ford', 'Seat', 'Renault' ],
-    models: [ 'Corolla', 'Golf', 'Focus', 'Ibiza', 'Clio' ],
-    fuel_types: [ 'gasoline', 'diesel', 'hybrid' ],
-    passenger_capacity: 5
+    makes: {
+      'Toyota' => [ 'Corolla', 'Auris', 'Yaris', 'Prius' ],
+      'Volkswagen' => [ 'Golf', 'Passat', 'Polo', 'Tiguan' ],
+      'Ford' => [ 'Focus', 'Mondeo', 'Fiesta', 'Kuga' ],
+      'Seat' => [ 'Ibiza', 'León', 'Tarraco', 'Arona' ],
+      'Renault' => [ 'Clio', 'Mégane', 'Captur', 'Espace' ]
+    },
+    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    passenger_capacity: 5,
+    base_price: 15000
   },
   truck: {
-    makes: [ 'Mercedes', 'Volvo', 'MAN', 'Iveco', 'Scania' ],
-    models: [ 'Actros', 'FH', 'TGX', 'Stralis', 'R-Series' ],
-    fuel_types: [ 'diesel' ],
-    passenger_capacity: 2
+    makes: {
+      'Mercedes' => [ 'Actros 1840', 'Actros 2545', 'Sprinter 311' ],
+      'Volvo' => [ 'FH16', 'FH13', 'FM330' ],
+      'MAN' => [ 'TGX 28.440', 'TGX 33.480', 'TGX 18.320' ],
+      'Iveco' => [ 'Stralis 450', 'Stralis 380', 'Daily' ],
+      'Scania' => [ 'R450', 'R490', 'G450' ]
+    },
+    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    passenger_capacity: 2,
+    base_price: 80000
   },
   van: {
-    makes: [ 'Mercedes', 'Ford', 'Fiat', 'Peugeot', 'Citroën' ],
-    models: [ 'Sprinter', 'Transit', 'Ducato', 'Boxer', 'Jumper' ],
-    fuel_types: [ 'diesel', 'electric' ],
-    passenger_capacity: 3
+    makes: {
+      'Mercedes' => [ 'Sprinter 314', 'Sprinter 319', 'Vito 119' ],
+      'Ford' => [ 'Transit 290S', 'Transit 350L', 'Transit 470' ],
+      'Fiat' => [ 'Ducato 30', 'Ducato 35', 'Ducato 40' ],
+      'Peugeot' => [ 'Boxer 330', 'Boxer 435', 'Expert' ],
+      'Citroën' => [ 'Jumper 330', 'Jumper 435', 'Berlingo' ]
+    },
+    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    passenger_capacity: 3,
+    base_price: 35000
+  },
+  motorcycle: {
+    makes: {
+      'BMW' => [ 'R 1250 GS', 'F 750 GS' ],
+      'Yamaha' => [ 'T-Max', 'XMax' ],
+      'Honda' => [ 'PCX', 'SH' ],
+      'Piaggio' => [ 'MP3 300', 'Beverly' ]
+    },
+    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    passenger_capacity: 2,
+    base_price: 8000
   }
 }
 
-COLORS = [ 'White', 'Black', 'Silver', 'Blue', 'Red', 'Gray' ]
-STATUSES = [ 'active', 'inactive', 'maintenance' ]
+COLORS = [
+  'White', 'Black', 'Silver', 'Blue', 'Red', 'Gray',
+  'Green', 'Orange', 'Yellow', 'Purple', 'Brown', 'Beige'
+].freeze
+
+STATUSES = [ 'active', 'inactive', 'maintenance' ].freeze
+
+FUEL_CONSUMPTION = {
+  car: { gasoline: 7.5, diesel: 6.5, hybrid: 5.0, electric: 0.0 },
+  truck: { diesel: 25.0, lng: 22.0 },
+  van: { diesel: 9.5, electric: 0.0, lpg: 10.0 },
+  motorcycle: { gasoline: 3.5, hybrid: 3.0 }
+}.freeze
+
+MAINTENANCE_TYPES = [
+  'Oil Change', 'Brake Inspection', 'Tire Rotation',
+  'Air Filter Replacement', 'Transmission Service',
+  'Coolant Flush', 'Battery Check', 'Suspension Check'
+].freeze
+
+# ============================================
+# HELPER PARA GENERAR DATOS REALISTAS
+# ============================================
+
+def random_license_plate
+  region_code = %w[B M V A Z C].sample # Código de provincia ES
+  numbers = rand(1000..9999)
+  letters = ('A'..'Z').to_a.sample(3).join
+  "#{numbers}#{region_code}#{letters}"
+end
+
+def random_vin
+  "ES#{('0'..'9').to_a.sample(8).join}#{('A'..'Z').to_a.sample(3).join}"
+end
+
+# ============================================
+# GENERACIÓN DE VEHÍCULOS POR TENANT
+# ============================================
 
 tenants_with_vehicles.each do |tenant|
   puts "\n  Creating vehicles for: #{tenant.name}"
@@ -50,393 +1818,252 @@ tenants_with_vehicles.each do |tenant|
 
     vehicle_count = case tenant.slug
     when 'tech-startup'
-      5  # Pocos vehículos
+      10  # Flota pequeña pero variada
     when 'global-logistics'
-      25 # Flota mediana
+      40  # Flota mediana
     when 'enterprise-mega'
-      50 # Flota grande
+      80  # Flota grande con variedad
     else
-      10
+      15
     end
 
-    vehicle_count.times do |i|
-      # Tipo de vehículo aleatorio
-      vehicle_type = VEHICLE_DATA.keys.sample
-      vehicle_info = VEHICLE_DATA[vehicle_type]
+    # ESTADÍSTICAS PARA TRACKING
+    vehicles_created = 0
+    vehicles_by_type = {}
+    maintenance_scheduled = 0
 
-      make = vehicle_info[:makes].sample
-      model = vehicle_info[:models].sample
+    vehicle_count.times do |i|
+      # Determinar tipo de vehículo (con pesos probabilísticos)
+      case tenant.slug
+      when 'tech-startup'
+        vehicle_type = [ :car, :van ].sample
+      when 'global-logistics'
+        weights = { truck: 0.4, van: 0.4, car: 0.15, motorcycle: 0.05 }
+        vehicle_type = weights.max_by { |_k, w| rand ** (1.0 / w) }[0]
+      when 'enterprise-mega'
+        weights = { truck: 0.35, van: 0.35, car: 0.25, motorcycle: 0.05 }
+        vehicle_type = weights.max_by { |_k, w| rand ** (1.0 / w) }[0]
+      end
+
+      vehicles_by_type[vehicle_type] = (vehicles_by_type[vehicle_type] || 0) + 1
+
+      # Datos específicos del vehículo
+      vehicle_info = VEHICLE_CATALOG[vehicle_type]
+      make = vehicle_info[:makes].keys.sample
+      model = vehicle_info[:makes][make].sample
       fuel_type = vehicle_info[:fuel_types].sample
       color = COLORS.sample
       status = STATUSES.sample
+      year = rand(2016..2024)
+      month = rand(1..12)
+      day = rand(1..28)
 
-      # Matrícula española aleatoria
-      license_plate = "#{rand(1000..9999)}#{('A'..'Z').to_a.sample(3).join}"
+      # Datos realistas
+      purchase_date = Date.new(year, month, day)
+      registration_date = purchase_date + rand(1..30).days
 
-      # Año aleatorio (últimos 10 años)
-      year = rand(2015..2024)
+      # Calculatekilometraje realista
+      months_in_service = ((Date.current - purchase_date).to_i / 30.0).round
+      annual_km = case vehicle_type
+      when :truck then rand(80000..120000)
+      when :van then rand(50000..80000)
+      when :car then rand(30000..60000)
+      when :motorcycle then rand(8000..15000)
+      end
 
-      # Nodo aleatorio
+      odometer = (months_in_service * annual_km / 12.0).to_i + rand(0..5000)
+
+      license_plate = random_license_plate
+      fleet_number = "#{tenant.slug[0..2].upcase}-#{vehicle_type.to_s[0..1].upcase}#{(i + 1).to_s.rjust(4, '0')}"
+
+      # Datos de expiración
+      registration_expiry = registration_date + 4.years
+      insurance_expiry = Date.current + rand(30..360).days
+
+      # Algunos registros próximos a expirar
+      if i % 12 == 0
+        registration_expiry = 20.days.from_now
+      end
+      if i % 15 == 0
+        insurance_expiry = 10.days.from_now
+      end
+
+      # Última revisión
+      last_maintenance_days = case status
+      when 'maintenance'
+        rand(8..12).months.ago
+      when 'active'
+        rand(1..6).months.ago
+      else
+        rand(6..24).months.ago
+      end
+
+      # Nodo de asignación
       node = nodes_with_vehicles.sample
 
-      # Kilometraje basado en año
-      base_km = (2024 - year) * rand(15000..25000)
-      odometer = base_km + rand(0..10000)
-
+      # Crear vehículo
       vehicle = Vehicle.create_with(
-        name: "#{make} #{model} #{license_plate}",
+        name: "#{make} #{model} (#{license_plate})",
         vehicle_type: vehicle_type.to_s,
         make: make,
         model: model,
         year: year,
         color: color,
         license_plate: license_plate,
-        vin: "VIN#{SecureRandom.hex(8).upcase}",
-        fleet_number: "FL-#{tenant.slug[0..2].upcase}-#{(i + 1).to_s.rjust(4, '0')}",
+        vin: random_vin,
+        fleet_number: fleet_number,
         status: status,
         fuel_type: fuel_type,
-        fuel_capacity: vehicle_type == :truck ? 300 : (vehicle_type == :van ? 80 : 50),
+        fuel_capacity: case vehicle_type
+                       when :truck then rand(250..400)
+                       when :van then rand(60..100)
+                       when :car then rand(45..70)
+                       when :motorcycle then rand(12..20)
+                       end,
         passenger_capacity: vehicle_info[:passenger_capacity],
         odometer: odometer,
-        purchase_date: Date.new(year, rand(1..12), rand(1..28)),
-        registration_expires_at: Date.new(2025, rand(1..12), rand(1..28)),
-        insurance_expires_at: Date.new(2025, rand(1..12), rand(1..28)),
-        last_maintenance_date: rand(1..6).months.ago,
+        purchase_date: purchase_date,
+        registration_expires_at: registration_expiry,
+        insurance_expires_at: insurance_expiry,
+        last_maintenance_date: last_maintenance_days,
         organizational_node: node,
         metadata: {
           gps_enabled: [ true, false ].sample,
-          telematics_unit: [ 'Unit-A', 'Unit-B', 'Unit-C', nil ].sample,
-          tags: [ 'priority', 'long-distance', 'urban', 'backup' ].sample(rand(0..2))
+          telematics_unit: [ 'TUnit-GPS-01', 'TUnit-GPS-02', 'TUnit-GPS-03', nil ].sample,
+          tags: [ 'priority', 'long-distance', 'urban', 'backup', 'high-value' ].sample(rand(0..2)),
+          acquisition_date: purchase_date.to_s,
+          depreciation_rate: 0.15
         },
         specifications: {
-          engine: "#{rand(90..300)}HP",
-          transmission: [ 'Manual', 'Automatic' ].sample,
-          doors: vehicle_type == :truck ? 2 : rand(3..5),
-          load_capacity_kg: vehicle_type == :truck ? rand(10000..25000) :
-                           (vehicle_type == :van ? rand(1000..3000) : nil)
+          engine_cc: case vehicle_type
+                     when :motorcycle then rand(250..1200)
+                     when :car then rand(1200..2000)
+                     when :van then rand(2000..3000)
+                     when :truck then rand(10000..16000)
+                     end,
+          power_hp: case vehicle_type
+                    when :motorcycle then rand(25..150)
+                    when :car then rand(90..200)
+                    when :van then rand(140..250)
+                    when :truck then rand(300..500)
+                    end,
+          transmission: [ 'Manual', 'Automatic', 'CVT' ].sample,
+          axles: vehicle_type == :truck ? rand(2..3) : 2,
+          doors: vehicle_type == :truck ? 2 : (vehicle_type == :motorcycle ? 0 : rand(2..5)),
+          load_capacity_kg: case vehicle_type
+                            when :truck then rand(18000..26000)
+                            when :van then rand(1000..3500)
+                            else nil
+                            end,
+          max_speed_kmh: case vehicle_type
+                         when :motorcycle then rand(180..280)
+                         when :car then rand(180..250)
+                         when :van then rand(160..200)
+                         when :truck then rand(90..120)
+                         end,
+          fuel_consumption_l100km: FUEL_CONSUMPTION[vehicle_type][fuel_type] || 0
         }
-      ).find_or_create_by!(tenant: tenant)
+      ).find_or_create_by!(
+        tenant: tenant,
+        license_plate: license_plate
+      )
 
-      # Algunos vehículos con registro próximo a expirar
-      if i % 10 == 0
-        vehicle.update_column(:registration_expires_at, 15.days.from_now)
-      end
-
-      # Algunos con seguro próximo a expirar
-      if i % 12 == 0
-        vehicle.update_column(:insurance_expires_at, 20.days.from_now)
-      end
-
-      # Algunos que necesitan mantenimiento
-      if i % 8 == 0
-        vehicle.update_columns(
-          last_maintenance_date: 8.months.ago,
-          status: 'maintenance'
-        )
-      end
+      vehicles_created += 1
     end
 
-    puts "    ✓ Created #{vehicle_count} vehicles"
+    # ESTADÍSTICAS DEL TENANT
+    puts "    ✓ Created #{vehicles_created} vehicles"
+    puts "      Vehicle types: #{vehicles_by_type.map { |k, v| "#{k}: #{v}" }.join(', ')}"
 
-    # Estadísticas del tenant
-    total = Vehicle.count
-    by_type = Vehicle.group(:vehicle_type).count
+    # Contar por estado
     by_status = Vehicle.group(:status).count
+    puts "      Status: #{by_status.map { |k, v| "#{k}: #{v}" }.join(', ')}"
 
-    puts "      By Type: #{by_type.map { |k, v| "#{k}: #{v}" }.join(', ')}"
-    puts "      By Status: #{by_status.map { |k, v| "#{k}: #{v}" }.join(', ')}"
+    # Vehículos con mantenimiento próximo
+    needs_maintenance = Vehicle.where('last_maintenance_date < ?', 6.months.ago).count
+    puts "      Need maintenance: #{needs_maintenance}"
+
+    # Registros expirando
+    expiring_registration = Vehicle.where('registration_expires_at BETWEEN ? AND ?',
+                                         Date.current, 30.days.from_now).count
+    expiring_insurance = Vehicle.where('insurance_expires_at BETWEEN ? AND ?',
+                                       Date.current, 30.days.from_now).count
+    puts "      Expiring soon: #{expiring_registration} registrations, #{expiring_insurance} insurance"
+    puts "      Maintenance records created: #{maintenance_scheduled}"
   end
 end
 
 # ============================================
-# RESUMEN
+# RESUMEN GLOBAL
 # ============================================
 
-puts "\n  📊 Vehicles Summary:"
+puts "\n  📊 Global Vehicles Summary:"
 
-# Usar unscoped para contar sin filtros de tenant
 ActsAsTenant.without_tenant do
   total_vehicles = Vehicle.unscoped.count
+
   puts "    - Total Vehicles: #{total_vehicles}"
 
-  puts "    - By Type:"
+  puts "\n    - Vehicle Distribution by Type:"
   Vehicle.unscoped.group(:vehicle_type).count.each do |type, count|
-    puts "      - #{type.to_s.capitalize}: #{count}"
+    percentage = ((count.to_f / total_vehicles) * 100).round(1)
+    puts "      - #{type.to_s.capitalize}: #{count} (#{percentage}%)"
   end
 
-  puts "    - By Status:"
+  puts "\n    - Status Distribution:"
   Vehicle.unscoped.group(:status).count.each do |status, count|
-    puts "      - #{status.capitalize}: #{count}"
+    percentage = ((count.to_f / total_vehicles) * 100).round(1)
+    puts "      - #{status.capitalize}: #{count} (#{percentage}%)"
   end
 
-  puts "    - Expiring Soon:"
-  puts "      - Registration: #{Vehicle.unscoped.where('registration_expires_at BETWEEN ? AND ?', Date.current, 30.days.from_now).count}"
-  puts "      - Insurance: #{Vehicle.unscoped.where('insurance_expires_at BETWEEN ? AND ?', Date.current, 30.days.from_now).count}"
-
-  puts "\n  🚗 Sample Vehicles:"
-  Vehicle.unscoped.limit(5).each do |v|
-    ActsAsTenant.with_tenant(v.tenant) do
-      puts "    #{v.fleet_number}: #{v.name} (#{v.status})"
-      puts "      - Tenant: #{v.tenant.name}"
-      puts "      - Location: #{v.organization_path}"
-      puts "      - #{v.odometer.to_i} km, #{v.year}, #{v.fuel_type}"
-    end
+  puts "\n    - Fuel Type Distribution:"
+  Vehicle.unscoped.group(:fuel_type).count.each do |fuel, count|
+    percentage = ((count.to_f / total_vehicles) * 100).round(1)
+    puts "      - #{fuel.capitalize}: #{count} (#{percentage}%)"
   end
+
+  puts "\n    - Fleet Age Analysis:"
+  avg_year = Vehicle.unscoped.average(:year).round
+  oldest = Vehicle.unscoped.minimum(:year)
+  newest = Vehicle.unscoped.maximum(:year)
+  puts "      - Average year: #{avg_year}"
+  puts "      - Range: #{oldest} - #{newest}"
+
+  puts "\n    - Mileage Summary:"
+  avg_odometer = Vehicle.unscoped.average(:odometer).round
+  max_odometer = Vehicle.unscoped.maximum(:odometer)
+  min_odometer = Vehicle.unscoped.minimum(:odometer)
+  puts "      - Average: #{avg_odometer} km"
+  puts "      - Range: #{min_odometer} - #{max_odometer} km"
+
+  puts "\n    - Maintenance Status:"
+  needs_service = Vehicle.unscoped.where('last_maintenance_date < ?', 6.months.ago).count
+  puts "      - Needs service (>6 months): #{needs_service}"
+
+  expiring_reg = Vehicle.unscoped.where('registration_expires_at BETWEEN ? AND ?',
+                                        Date.current, 30.days.from_now).count
+  expiring_ins = Vehicle.unscoped.where('insurance_expires_at BETWEEN ? AND ?',
+                                        Date.current, 30.days.from_now).count
+  puts "      - Registration expiring (30 days): #{expiring_reg}"
+  puts "      - Insurance expiring (30 days): #{expiring_ins}"
 end
 
-# frozen_string_literal: true
+puts "\n  🚗 Sample Vehicles by Tenant:"
 
-# db/seeds/07_scopes.rb
-# User scopes para nodos y vehículos
-
-puts "\n🔐 Creating Access Scopes..."
-
-# ============================================
-# GLOBAL LOGISTICS - SCOPES COMPLETOS
-# ============================================
-
-logistics = Tenant.find_by(slug: 'global-logistics')
-
-if logistics
-  puts "\n  Creating scopes for: #{logistics.name}"
-
-  ActsAsTenant.with_tenant(logistics) do
-    # Obtener usuarios y recursos
-    managers = TenantMembership.where(tenant: logistics)
-                               .managers.active
-                               .includes(:user).map(&:user)
-
-    drivers = TenantMembership.where(tenant: logistics)
-                              .drivers.active
-                              .includes(:user).map(&:user)
-
-    nodes = OrganizationalNode.where(tenant: logistics).to_a
-    vehicles = Vehicle.where(tenant: logistics).active.to_a
-
-    # ============================================
-    # NODE SCOPES PARA MANAGERS
-    # ============================================
-
-    puts "\n    Node Scopes for Managers:"
-
-    managers.each_with_index do |manager, idx|
-      # Cada manager gestiona 1-2 regiones/ramas
-      assigned_nodes = nodes.sample(rand(1..3))
-
-      assigned_nodes.each do |node|
-        UserNodeScope.create_with(
-          access_type: 'write',
-          include_children: true,
-          organizational_node: node,
-          tenant: logistics
-        ).find_or_create_by!(
-          user: manager
-        )
-      end
-
-      puts "      ✓ Manager #{idx + 1}: #{assigned_nodes.count} nodes (write + children)"
-    end
-
-    # ============================================
-    # VEHICLE SCOPES PARA DRIVERS
-    # ============================================
-
-    puts "\n    Vehicle Scopes for Drivers:"
-
-    drivers.each_with_index do |driver, idx|
-      # Cada driver tiene acceso a 1-3 vehículos
-      assigned_vehicles = vehicles.sample(rand(1..3))
-
-      assigned_vehicles.each do |vehicle|
-        UserVehicleScope.create_with(
-          access_type: 'drive',
-          valid_from: 1.month.ago,
-          valid_until: 6.months.from_now,
-          vehicle: vehicle,
-          tenant: logistics
-        ).find_or_create_by!(
-          user: driver
-        )
-      end
-
-      puts "      ✓ Driver #{idx + 1}: #{assigned_vehicles.count} vehicles (drive access)"
-    end
-
-    # ============================================
-    # SCOPES TEMPORALES (ALGUNOS DRIVERS)
-    # ============================================
-
-    puts "\n    Temporary Vehicle Access:"
-
-    temp_drivers = drivers.sample(2)
-    temp_drivers.each_with_index do |driver, idx|
-      vehicle = vehicles.sample
-
-      UserVehicleScope.create_with(
-        access_type: 'drive',
-        valid_from: Time.current,
-        valid_until: 2.weeks.from_now,
-        vehicle: vehicle,
-        tenant: logistics
-      ).find_or_create_by!(
-        user: driver,
-        vehicle: vehicle
-      )
-
-      puts "      ✓ Temporary access: Driver -> #{vehicle.fleet_number} (2 weeks)"
-    end
-
-    # ============================================
-    # SCOPES EXPIRADOS (PARA TESTING)
-    # ============================================
-
-    if drivers.any?
-      expired_driver = drivers.first
-      expired_vehicle = vehicles.first
-
-      UserVehicleScope.create!(
-        user: expired_driver,
-        vehicle: expired_vehicle,
-        tenant: logistics,
-        access_type: 'drive',
-        valid_from: 3.months.ago,
-        valid_until: 1.week.ago
-      )
-
-      puts "      ✓ Expired access created (for testing)"
-    end
-
-    # Estadísticas
-    puts "\n    Statistics:"
-    puts "      - Node Scopes: #{UserNodeScope.count}"
-    puts "      - Vehicle Scopes: #{UserVehicleScope.count}"
-    puts "      - Active Vehicle Scopes: #{UserVehicleScope.active.count}"
-    puts "      - Expired Vehicle Scopes: #{UserVehicleScope.expired.count}"
-  end
-end
-
-# ============================================
-# TECH STARTUP - SCOPES SIMPLES
-# ============================================
-
-techstart = Tenant.find_by(slug: 'tech-startup')
-
-if techstart
-  puts "\n  Creating scopes for: #{techstart.name}"
-
-  ActsAsTenant.with_tenant(techstart) do
-    managers = TenantMembership.where(tenant: techstart)
-                               .managers.active
-                               .includes(:user).map(&:user)
-
-    vehicles = Vehicle.where(tenant: techstart).to_a
-
-    # Manager tiene acceso a todos los vehículos
-    if managers.any? && vehicles.any?
-      manager = managers.first
-
-      vehicles.each do |vehicle|
-        UserVehicleScope.create_with(
-          access_type: 'write',
-          tenant: techstart
-        ).find_or_create_by!(
-          user: manager,
-          vehicle: vehicle
-        )
-      end
-
-      puts "    ✓ Manager: Full access to #{vehicles.count} vehicles"
+[
+  Tenant.find_by(slug: 'tech-startup'),
+  Tenant.find_by(slug: 'global-logistics'),
+  Tenant.find_by(slug: 'enterprise-mega')
+].compact.each do |tenant|
+  ActsAsTenant.with_tenant(tenant) do
+    puts "\n    #{tenant.name}:"
+    Vehicle.limit(3).each do |v|
+      puts "      • #{v.fleet_number}: #{v.name}"
+      puts "        - Type: #{v.vehicle_type}, Year: #{v.year}, Fuel: #{v.fuel_type}"
+      puts "        - Status: #{v.status}, Odometer: #{v.odometer} km"
+      puts "        - Location: #{v.organizational_node.name if v.organizational_node}"
     end
   end
 end
 
-# ============================================
-# ENTERPRISE - SCOPES COMPLEJOS
-# ============================================
-
-enterprise = Tenant.find_by(slug: 'enterprise-mega')
-
-if enterprise
-  puts "\n  Creating scopes for: #{enterprise.name}"
-
-  ActsAsTenant.with_tenant(enterprise) do
-    managers = TenantMembership.where(tenant: enterprise)
-                               .managers.active
-                               .includes(:user).map(&:user)
-
-    nodes = OrganizationalNode.where(tenant: enterprise).to_a
-    regions = nodes.select { |n| n.level.slug == 'region' }
-
-    # Cada manager gestiona una región completa
-    managers.each_with_index do |manager, idx|
-      next if regions.empty?
-
-      region = regions[idx % regions.size]
-
-      UserNodeScope.create_with(
-        access_type: 'admin',
-        include_children: true,
-        organizational_node: region,
-        tenant: enterprise
-      ).find_or_create_by!(
-        user: manager
-      )
-
-      puts "    ✓ Manager #{idx + 1}: Admin access to #{region.name} + children"
-    end
-  end
-end
-
-# ============================================
-# RESUMEN FINAL
-# ============================================
-
-puts "\n  📊 Access Scopes Summary:"
-
-# Usar unscoped para contar sin filtros
-ActsAsTenant.without_tenant do
-  puts "    - Total Node Scopes: #{UserNodeScope.unscoped.count}"
-  puts "      - Read Access: #{UserNodeScope.unscoped.where(access_type: 'read').count}"
-  puts "      - Write Access: #{UserNodeScope.unscoped.where(access_type: 'write').count}"
-  puts "      - Admin Access: #{UserNodeScope.unscoped.where(access_type: 'admin').count}"
-  puts "      - With Children: #{UserNodeScope.unscoped.where(include_children: true).count}"
-
-  puts "\n    - Total Vehicle Scopes: #{UserVehicleScope.unscoped.count}"
-  puts "      - Read Access: #{UserVehicleScope.unscoped.where(access_type: 'read').count}"
-  puts "      - Write Access: #{UserVehicleScope.unscoped.where(access_type: 'write').count}"
-  puts "      - Drive Access: #{UserVehicleScope.unscoped.where(access_type: 'drive').count}"
-
-  # Active/Expired sin scope
-  active_count = UserVehicleScope.unscoped.where(
-    "(valid_from IS NULL OR valid_from <= ?) AND (valid_until IS NULL OR valid_until >= ?)",
-    Time.current, Time.current
-  ).count
-  expired_count = UserVehicleScope.unscoped.where("valid_until < ?", Time.current).count
-
-  puts "      - Active: #{active_count}"
-  puts "      - Expired: #{expired_count}"
-end
-
-puts "\n  🔍 Sample Access Patterns:"
-
-# Mostrar algunos ejemplos de acceso
-if logistics
-  ActsAsTenant.with_tenant(logistics) do
-    sample_manager = TenantMembership.managers.active.first&.user
-    sample_driver = TenantMembership.drivers.active.first&.user
-
-    if sample_manager
-      node_scopes = UserNodeScope.where(user: sample_manager).count
-      puts "    Manager (#{sample_manager.email}):"
-      puts "      - Node Scopes: #{node_scopes}"
-    end
-
-    if sample_driver
-      vehicle_scopes_count = UserVehicleScope.where(user: sample_driver)
-        .where("(valid_from IS NULL OR valid_from <= ?) AND (valid_until IS NULL OR valid_until >= ?)",
-               Time.current, Time.current).count
-      puts "    Driver (#{sample_driver.email}):"
-      puts "      - Active Vehicle Access: #{vehicle_scopes_count}"
-    end
-  end
-end
+puts "\n  ✅ Vehicle seeding completed successfully!"

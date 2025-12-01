@@ -1,5 +1,3 @@
-# frozen_string_literal: true
-
 # db/seeds/02_users.rb
 # Usuarios base del sistema con diferentes estados
 

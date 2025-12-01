@@ -1,8 +1,3 @@
-# frozen_string_literal: true
-
-# Migración para la relación User ↔ Tenant ↔ Role
-# Permite que un usuario pertenezca a múltiples tenants con diferentes roles
-
 class CreateTenantMemberships < ActiveRecord::Migration[8.0]
   def change
     create_table :tenant_memberships do |t|
@@ -14,7 +9,7 @@ class CreateTenantMemberships < ActiveRecord::Migration[8.0]
 
       # Rol del usuario en este tenant (por ahora como string, en Fase 3 será FK)
       # Roles: 'admin', 'manager', 'driver'
-      t.string :role, null: false, limit: 50, default: 'driver'
+      t.bigint :role_id, null: false
 
       # ============================================
       # METADATA DE LA MEMBRESÍA
@@ -51,9 +46,13 @@ class CreateTenantMemberships < ActiveRecord::Migration[8.0]
     # ÍNDICES
     # ============================================
 
+    # Índice para role_id (de la segunda migración)
+    add_index :tenant_memberships, :role_id, name: 'index_tenant_memberships_on_role_id'
+
     # Combinación única: un usuario no puede tener el mismo rol dos veces en un tenant
+    # *** CAMBIO AQUÍ: Ahora usa role_id en lugar de role (string) ***
     add_index :tenant_memberships,
-              [ :user_id, :tenant_id, :role ],
+              [ :user_id, :tenant_id, :role_id ], # <-- Usamos role_id
               unique: true,
               name: 'index_tenant_memberships_on_user_tenant_role',
               where: 'deleted_at IS NULL'
@@ -87,6 +86,7 @@ class CreateTenantMemberships < ActiveRecord::Migration[8.0]
     # ============================================
     # FOREIGN KEYS
     # ============================================
+    add_foreign_key :tenant_memberships, :roles, column: :role_id, on_delete: :restrict
     add_foreign_key :tenant_memberships, :users, column: :user_id, on_delete: :cascade
     add_foreign_key :tenant_memberships, :tenants, column: :tenant_id, on_delete: :cascade
     add_foreign_key :tenant_memberships, :users, column: :created_by, on_delete: :nullify

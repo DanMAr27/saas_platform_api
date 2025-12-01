@@ -163,7 +163,7 @@ module V1
               vehicle_id: scope.vehicle_id,
               vehicle_name: scope.vehicle.name,
               license_plate: scope.vehicle.license_plate,
-              vehicle_code: scope.vehicle.code,
+              vehicle_code: scope.vehicle.fleet_number,
               access_type: scope.access_type,
               valid_from: scope.valid_from&.iso8601,
               valid_until: scope.valid_until&.iso8601,

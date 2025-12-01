@@ -45,6 +45,20 @@ class User < ApplicationRecord
           class_name: "TenantMembership"
   has_one :default_tenant, through: :default_tenant_membership, source: :tenant
 
+
+  has_many :user_node_scopes, dependent: :destroy
+  has_many :user_vehicle_scopes, dependent: :destroy
+
+  # Nodos accesibles a través de scopes
+  has_many :accessible_organizational_nodes,
+           through: :user_node_scopes,
+           source: :organizational_node
+
+  # Vehículos accesibles a través de scopes
+  has_many :accessible_vehicles,
+           through: :user_vehicle_scopes,
+           source: :vehicle
+
   # ============================================
   # VALIDATIONS
   # ============================================

@@ -1,220 +1,381 @@
-# frozen_string_literal: true
-
 # db/seeds/07_scopes.rb
-# User scopes para nodos y vehículos
+# Crear scopes de acceso y activar membresías pendientes
 
 puts "\n🔐 Creating Access Scopes..."
 
+# Tenants activos con estructura organizacional
+active_tenants = [
+  Tenant.find_by(slug: 'acme-corp'),
+  Tenant.find_by(slug: 'tech-startup'),
+  Tenant.find_by(slug: 'global-logistics'),
+  Tenant.find_by(slug: 'enterprise-mega')
+].compact
+
+# Roles
+manager_role = Role.find_by!(slug: 'tenant_manager')
+driver_role = Role.find_by!(slug: 'tenant_driver')
+viewer_role = Role.find_by(slug: 'tenant_viewer')
+coordinator_role = Role.find_by(slug: 'fleet_coordinator')
+
 # ============================================
-# GLOBAL LOGISTICS - SCOPES COMPLETOS
+# HELPERS
 # ============================================
 
-logistics = Tenant.find_by(slug: 'global-logistics')
+def assign_node_scope(user, node, tenant, access_type: 'write', include_children: true)
+  UserNodeScope.create_with(
+    access_type: access_type,
+    include_children: include_children,
+    created_by: tenant.primary_admin&.id
+  ).find_or_create_by!(
+    user: user,
+    organizational_node: node,
+    tenant: tenant
+  )
+end
 
-if logistics
-  puts "\n  Creating scopes for: #{logistics.name}"
+def assign_vehicle_scope(user, vehicle, tenant, access_type: 'drive', valid_from: nil, valid_until: nil)
+  UserVehicleScope.create_with(
+    access_type: access_type,
+    valid_from: valid_from || Time.current,
+    valid_until: valid_until,
+    created_by: tenant.primary_admin&.id
+  ).find_or_create_by!(
+    user: user,
+    vehicle: vehicle,
+    tenant: tenant
+  )
+end
 
-  ActsAsTenant.with_tenant(logistics) do
-    # Obtener usuarios y recursos
-    managers = TenantMembership.where(tenant: logistics)
-                               .managers.active
-                               .includes(:user).map(&:user)
+def activate_membership(membership)
+  return unless membership.invited?
 
-    drivers = TenantMembership.where(tenant: logistics)
-                              .drivers.active
-                              .includes(:user).map(&:user)
+  # Verificar que tenga los scopes necesarios
+  if membership.has_valid_scopes?
+    membership.update!(status: 'active')
+    puts "      ✓ Activated: #{membership.user.email} as #{membership.role.name}"
+    true
+  else
+    puts "      ⚠️  Cannot activate #{membership.user.email}: missing scopes"
+    false
+  end
+end
 
-    nodes = OrganizationalNode.where(tenant: logistics).to_a
-    # CORRECCIÓN: No usar scope .active aquí, obtener todos los vehículos
-    vehicles = Vehicle.where(tenant: logistics, status: 'active').to_a
+# ============================================
+# PROCESAR CADA TENANT
+# ============================================
 
+stats = {
+  node_scopes: 0,
+  vehicle_scopes: 0,
+  activated_memberships: 0
+}
+
+active_tenants.each do |tenant|
+  puts "\n  Processing: #{tenant.name}"
+
+  ActsAsTenant.with_tenant(tenant) do
     # ============================================
-    # NODE SCOPES PARA MANAGERS
+    # OBTENER DATOS DEL TENANT
     # ============================================
 
-    puts "\n    Node Scopes for Managers:"
+    nodes = OrganizationalNode.active.includes(:level).to_a
+    vehicles = Vehicle.active.to_a
 
-    managers.each_with_index do |manager, idx|
-      # Cada manager gestiona 1-2 regiones/ramas
-      assigned_nodes = nodes.sample(rand(1..3))
+    if nodes.empty?
+      puts "    ⚠️  No organizational nodes found - skipping node scopes"
+    end
 
-      assigned_nodes.each do |node|
-        UserNodeScope.create_with(
-          access_type: 'write',
-          include_children: true,
-          organizational_node: node,
-          tenant: logistics
-        ).find_or_create_by!(
-          user: manager
-        )
-      end
-
-      puts "      ✓ Manager #{idx + 1}: #{assigned_nodes.count} nodes (write + children)"
+    if vehicles.empty?
+      puts "    ⚠️  No vehicles found - skipping vehicle scopes"
     end
 
     # ============================================
-    # VEHICLE SCOPES PARA DRIVERS
+    # MANAGERS: Asignar NODE SCOPES
     # ============================================
 
-    puts "\n    Vehicle Scopes for Drivers:"
+    manager_memberships = TenantMembership
+      .where(tenant: tenant, role: manager_role, status: 'invited')
+      .includes(:user)
 
-    # Verificar que hay vehículos disponibles
-    if vehicles.empty?
-      puts "      ⚠ No active vehicles found for drivers"
-    else
-      drivers.each_with_index do |driver, idx|
-        # Cada driver tiene acceso a 1-3 vehículos
-        num_vehicles = [ rand(1..3), vehicles.size ].min
-        assigned_vehicles = vehicles.sample(num_vehicles)
+    if manager_memberships.any? && nodes.any?
+      puts "\n    Assigning Node Scopes to Managers:"
 
-        assigned_vehicles.each do |vehicle|
-          UserVehicleScope.create_with(
-            access_type: 'drive',
-            valid_from: 1.month.ago,
-            valid_until: 6.months.from_now,
-            vehicle: vehicle,
-            tenant: logistics
-          ).find_or_create_by!(
-            user: driver
-          )
+      manager_memberships.each_with_index do |membership, idx|
+        # Asignar nodos de forma distribuida
+        case tenant.slug
+        when 'acme-corp', 'tech-startup'
+          # Tenants pequeños: acceso a todos los nodos
+          nodes.each do |node|
+            assign_node_scope(
+              membership.user, node, tenant,
+              access_type: 'write',
+              include_children: true
+            )
+            stats[:node_scopes] += 1
+          end
+
+        when 'global-logistics', 'enterprise-mega'
+          # Tenants grandes: asignar por región/área
+          # Distribuir managers entre regiones
+          regions = nodes.select { |n| n.level.slug == 'region' }
+
+          if regions.any?
+            # Asignar una región específica a cada manager
+            assigned_region = regions[idx % regions.size]
+            assign_node_scope(
+              membership.user, assigned_region, tenant,
+              access_type: 'write',
+              include_children: true # Incluye branches y departamentos
+            )
+            stats[:node_scopes] += 1
+
+            puts "      - #{membership.user.email}: #{assigned_region.name} (with children)"
+          else
+            # Si no hay regiones, asignar branches
+            branches = nodes.select { |n| n.level.slug == 'branch' }
+            assigned_branches = branches.sample(rand(1..3))
+
+            assigned_branches.each do |branch|
+              assign_node_scope(
+                membership.user, branch, tenant,
+                access_type: 'write',
+                include_children: true
+              )
+              stats[:node_scopes] += 1
+            end
+
+            puts "      - #{membership.user.email}: #{assigned_branches.size} branches"
+          end
         end
 
-        puts "      ✓ Driver #{idx + 1}: #{assigned_vehicles.count} vehicles (drive access)"
+        # Activar la membresía
+        if activate_membership(membership)
+          stats[:activated_memberships] += 1
+        end
       end
+    end
 
-      # ============================================
-      # SCOPES TEMPORALES (ALGUNOS DRIVERS)
-      # ============================================
+    # ============================================
+    # FLEET COORDINATORS: Asignar NODE SCOPES
+    # ============================================
 
-      puts "\n    Temporary Vehicle Access:"
+    if coordinator_role
+      coordinator_memberships = TenantMembership
+        .where(tenant: tenant, role: coordinator_role, status: 'invited')
+        .includes(:user)
 
-      if drivers.size >= 2
-        temp_drivers = drivers.sample(2)
-        temp_drivers.each_with_index do |driver, idx|
-          # CORRECCIÓN: Asegurarse de que hay vehículos disponibles
-          vehicle = vehicles.sample
+      if coordinator_memberships.any? && nodes.any?
+        puts "\n    Assigning Node Scopes to Fleet Coordinators:"
 
-          if vehicle
-            UserVehicleScope.create_with(
-              access_type: 'drive',
-              valid_from: Time.current,
-              valid_until: 2.weeks.from_now,
-              vehicle: vehicle,
-              tenant: logistics
-            ).find_or_create_by!(
-              user: driver,
-              vehicle: vehicle
+        coordinator_memberships.each do |membership|
+          # Coordinadores tienen acceso a múltiples branches
+          branches = nodes.select { |n| n.level.slug == 'branch' }
+          assigned_branches = branches.sample(rand(2..5).clamp(1, branches.size))
+
+          assigned_branches.each do |branch|
+            assign_node_scope(
+              membership.user, branch, tenant,
+              access_type: 'write',
+              include_children: true
             )
+            stats[:node_scopes] += 1
+          end
 
-            puts "      ✓ Temporary access: Driver -> #{vehicle.fleet_number} (2 weeks)"
-          else
-            puts "      ⚠ No vehicle available for temporary access"
+          puts "      - #{membership.user.email}: #{assigned_branches.size} branches"
+
+          if activate_membership(membership)
+            stats[:activated_memberships] += 1
           end
         end
       end
+    end
 
-      # ============================================
-      # SCOPES EXPIRADOS (PARA TESTING)
-      # ============================================
+    # ============================================
+    # VIEWERS: Asignar NODE SCOPES (READ-ONLY)
+    # ============================================
 
-      if drivers.any? && vehicles.any?
-        expired_driver = drivers.first
-        expired_vehicle = vehicles.first
+    if viewer_role
+      viewer_memberships = TenantMembership
+        .where(tenant: tenant, role: viewer_role, status: 'invited')
+        .includes(:user)
 
-        UserVehicleScope.create!(
-          user: expired_driver,
-          vehicle: expired_vehicle,
-          tenant: logistics,
-          access_type: 'drive',
-          valid_from: 3.months.ago,
-          valid_until: 1.week.ago
-        )
+      if viewer_memberships.any? && nodes.any?
+        puts "\n    Assigning Node Scopes to Viewers:"
 
-        puts "      ✓ Expired access created (for testing)"
+        viewer_memberships.each do |membership|
+          # Viewers: acceso read-only a nivel company o región
+          top_nodes = nodes.select { |n| n.level.slug.in?(%w[company region]) }
+
+          if top_nodes.any?
+            top_node = top_nodes.first
+            assign_node_scope(
+              membership.user, top_node, tenant,
+              access_type: 'read',
+              include_children: true # Ver todo debajo
+            )
+            stats[:node_scopes] += 1
+
+            puts "      - #{membership.user.email}: #{top_node.name} (read-only, with children)"
+
+            if activate_membership(membership)
+              stats[:activated_memberships] += 1
+            end
+          end
+        end
       end
     end
 
-    # Estadísticas
-    puts "\n    Statistics:"
-    puts "      - Node Scopes: #{UserNodeScope.count}"
-    puts "      - Vehicle Scopes: #{UserVehicleScope.count}"
-    puts "      - Active Vehicle Scopes: #{UserVehicleScope.active.count}"
-    puts "      - Expired Vehicle Scopes: #{UserVehicleScope.expired.count}"
-  end
-end
+    # ============================================
+    # DRIVERS: Asignar VEHICLE SCOPES
+    # ============================================
 
-# ============================================
-# TECH STARTUP - SCOPES SIMPLES
-# ============================================
+    driver_memberships = TenantMembership
+      .where(tenant: tenant, role: driver_role, status: 'invited')
+      .includes(:user)
 
-techstart = Tenant.find_by(slug: 'tech-startup')
+    if driver_memberships.any? && vehicles.any?
+      puts "\n    Assigning Vehicle Scopes to Drivers:"
 
-if techstart
-  puts "\n  Creating scopes for: #{techstart.name}"
+      driver_memberships.each_with_index do |membership, idx|
+        # Distribuir vehículos entre drivers
+        case tenant.slug
+        when 'acme-corp', 'tech-startup'
+          # Tenants pequeños: 2-3 vehículos por driver
+          vehicles_per_driver = rand(2..3).clamp(1, vehicles.size)
 
-  ActsAsTenant.with_tenant(techstart) do
-    managers = TenantMembership.where(tenant: techstart)
-                               .managers.active
-                               .includes(:user).map(&:user)
+        when 'global-logistics'
+          # Tenant mediano: 3-5 vehículos por driver
+          vehicles_per_driver = rand(3..5).clamp(1, vehicles.size)
 
-    vehicles = Vehicle.where(tenant: techstart, status: 'active').to_a
+        when 'enterprise-mega'
+          # Tenant grande: 2-4 vehículos por driver
+          vehicles_per_driver = rand(2..4).clamp(1, vehicles.size)
+        else
+          vehicles_per_driver = 2
+        end
 
-    # Manager tiene acceso a todos los vehículos
-    if managers.any? && vehicles.any?
-      manager = managers.first
+        # Asignar vehículos
+        start_idx = (idx * vehicles_per_driver) % vehicles.size
+        assigned_vehicles = vehicles.rotate(start_idx).take(vehicles_per_driver)
 
-      vehicles.each do |vehicle|
-        UserVehicleScope.create_with(
-          access_type: 'write',
-          tenant: techstart
-        ).find_or_create_by!(
-          user: manager,
-          vehicle: vehicle
-        )
+        assigned_vehicles.each do |vehicle|
+          # Algunos scopes temporales, otros permanentes
+          if rand < 0.3 # 30% con fecha de expiración
+            valid_until = rand(30..180).days.from_now
+          else
+            valid_until = nil # Sin expiración
+          end
+
+          assign_vehicle_scope(
+            membership.user, vehicle, tenant,
+            access_type: 'drive',
+            valid_until: valid_until
+          )
+          stats[:vehicle_scopes] += 1
+        end
+
+        expiry_text = assigned_vehicles.any? { |v|
+          UserVehicleScope.find_by(user: membership.user, vehicle: v)&.valid_until.present?
+        } ? " (some temporary)" : ""
+
+        puts "      - #{membership.user.email}: #{assigned_vehicles.size} vehicles#{expiry_text}"
+
+        if activate_membership(membership)
+          stats[:activated_memberships] += 1
+        end
       end
-
-      puts "    ✓ Manager: Full access to #{vehicles.count} vehicles"
-    elsif vehicles.empty?
-      puts "    ⚠ No active vehicles found"
     end
-  end
-end
 
-# ============================================
-# ENTERPRISE - SCOPES COMPLEJOS
-# ============================================
+    # ============================================
+    # USUARIO MULTI-TENANT
+    # ============================================
 
-enterprise = Tenant.find_by(slug: 'enterprise-mega')
-
-if enterprise
-  puts "\n  Creating scopes for: #{enterprise.name}"
-
-  ActsAsTenant.with_tenant(enterprise) do
-    managers = TenantMembership.where(tenant: enterprise)
-                               .managers.active
-                               .includes(:user).map(&:user)
-
-    nodes = OrganizationalNode.where(tenant: enterprise).to_a
-    regions = nodes.select { |n| n.level.slug == 'region' }
-
-    # Cada manager gestiona una región completa
-    managers.each_with_index do |manager, idx|
-      next if regions.empty?
-
-      region = regions[idx % regions.size]
-
-      UserNodeScope.create_with(
-        access_type: 'admin',
-        include_children: true,
-        organizational_node: region,
-        tenant: enterprise
-      ).find_or_create_by!(
-        user: manager
+    multi_user = User.find_by(email: 'operativo.universal@example.com')
+    if multi_user
+      membership = TenantMembership.find_by(
+        user: multi_user,
+        tenant: tenant,
+        status: 'invited'
       )
 
-      puts "    ✓ Manager #{idx + 1}: Admin access to #{region.name} + children"
+      if membership
+        case membership.role.slug
+        when 'tenant_manager'
+          # Asignar un nodo
+          if nodes.any?
+            node = nodes.sample
+            assign_node_scope(multi_user, node, tenant, include_children: true)
+            stats[:node_scopes] += 1
+
+            if activate_membership(membership)
+              puts "      ✓ Multi-tenant user: #{multi_user.email} (manager)"
+              stats[:activated_memberships] += 1
+            end
+          end
+
+        when 'tenant_driver'
+          # Asignar vehículos
+          if vehicles.any?
+            vehicles.sample(2).each do |vehicle|
+              assign_vehicle_scope(multi_user, vehicle, tenant)
+              stats[:vehicle_scopes] += 1
+            end
+
+            if activate_membership(membership)
+              puts "      ✓ Multi-tenant user: #{multi_user.email} (driver)"
+              stats[:activated_memberships] += 1
+            end
+          end
+
+        when 'tenant_viewer'
+          # Asignar acceso read-only
+          if nodes.any?
+            top_node = nodes.first
+            assign_node_scope(multi_user, top_node, tenant, access_type: 'read', include_children: true)
+            stats[:node_scopes] += 1
+
+            if activate_membership(membership)
+              puts "      ✓ Multi-tenant user: #{multi_user.email} (viewer)"
+              stats[:activated_memberships] += 1
+            end
+          end
+        end
+      end
     end
   end
+end
+
+# ============================================
+# VERIFICAR MEMBRESÍAS PENDIENTES
+# ============================================
+
+puts "\n  🔍 Checking for remaining invited memberships..."
+
+remaining_invited = TenantMembership.invited.includes(:user, :role, :tenant)
+if remaining_invited.any?
+  puts "    ⚠️  #{remaining_invited.count} memberships still invited (missing scopes):"
+
+  remaining_invited.group_by(&:tenant).each do |tenant, memberships|
+    puts "      #{tenant.name}:"
+    memberships.each do |m|
+      puts "        - #{m.user.email} (#{m.role.name})"
+
+      # Diagnóstico
+      if m.role.requires_any_scope?
+        if m.role.allows_node_scope?
+          node_scopes = m.user.user_node_scopes.kept.where(tenant: tenant).count
+          puts "          Missing: node scopes (has: #{node_scopes})"
+        end
+
+        if m.role.allows_vehicle_scope?
+          vehicle_scopes = m.user.user_vehicle_scopes.kept.active.where(tenant: tenant).count
+          puts "          Missing: vehicle scopes (has: #{vehicle_scopes})"
+        end
+      end
+    end
+  end
+else
+  puts "    ✅ All memberships with required scopes have been activated!"
 end
 
 # ============================================
@@ -223,50 +384,48 @@ end
 
 puts "\n  📊 Access Scopes Summary:"
 
-# Usar unscoped para contar sin filtros
 ActsAsTenant.without_tenant do
-  puts "    - Total Node Scopes: #{UserNodeScope.unscoped.count}"
-  puts "      - Read Access: #{UserNodeScope.unscoped.where(access_type: 'read').count}"
-  puts "      - Write Access: #{UserNodeScope.unscoped.where(access_type: 'write').count}"
-  puts "      - Admin Access: #{UserNodeScope.unscoped.where(access_type: 'admin').count}"
-  puts "      - With Children: #{UserNodeScope.unscoped.where(include_children: true).count}"
+  total_node_scopes = UserNodeScope.unscoped.kept.count
+  total_vehicle_scopes = UserVehicleScope.unscoped.kept.count
 
-  puts "\n    - Total Vehicle Scopes: #{UserVehicleScope.unscoped.count}"
-  puts "      - Read Access: #{UserVehicleScope.unscoped.where(access_type: 'read').count}"
-  puts "      - Write Access: #{UserVehicleScope.unscoped.where(access_type: 'write').count}"
-  puts "      - Drive Access: #{UserVehicleScope.unscoped.where(access_type: 'drive').count}"
+  puts "    - Total Node Scopes: #{total_node_scopes}"
+  puts "      - Read Access: #{UserNodeScope.unscoped.kept.read_access.count}"
+  puts "      - Write Access: #{UserNodeScope.unscoped.kept.write_access.count}"
+  puts "      - Admin Access: #{UserNodeScope.unscoped.kept.admin_access.count}"
+  puts "      - With Children: #{UserNodeScope.unscoped.kept.with_children.count}"
 
-  # Active/Expired sin scope
-  active_count = UserVehicleScope.unscoped.where(
-    "(valid_from IS NULL OR valid_from <= ?) AND (valid_until IS NULL OR valid_until >= ?)",
-    Time.current, Time.current
-  ).count
-  expired_count = UserVehicleScope.unscoped.where("valid_until < ?", Time.current).count
-
-  puts "      - Active: #{active_count}"
-  puts "      - Expired: #{expired_count}"
+  puts "\n    - Total Vehicle Scopes: #{total_vehicle_scopes}"
+  puts "      - Read Access: #{UserVehicleScope.unscoped.kept.read_access.count}"
+  puts "      - Write Access: #{UserVehicleScope.unscoped.kept.write_access.count}"
+  puts "      - Drive Access: #{UserVehicleScope.unscoped.kept.drive_access.count}"
+  puts "      - Active: #{UserVehicleScope.unscoped.kept.active.count}"
+  puts "      - Expired: #{UserVehicleScope.unscoped.kept.expired.count}"
 end
+
+puts "\n  📈 Seeding Statistics:"
+puts "    - Node scopes created: #{stats[:node_scopes]}"
+puts "    - Vehicle scopes created: #{stats[:vehicle_scopes]}"
+puts "    - Memberships activated: #{stats[:activated_memberships]}"
 
 puts "\n  🔍 Sample Access Patterns:"
 
 # Mostrar algunos ejemplos de acceso
-if logistics
-  ActsAsTenant.with_tenant(logistics) do
-    sample_manager = TenantMembership.managers.active.first&.user
-    sample_driver = TenantMembership.drivers.active.first&.user
+active_tenants.first(2).each do |tenant|
+  ActsAsTenant.with_tenant(tenant) do
+    puts "\n    #{tenant.name}:"
 
-    if sample_manager
-      node_scopes = UserNodeScope.where(user: sample_manager).count
-      puts "    Manager (#{sample_manager.email}):"
-      puts "      - Node Scopes: #{node_scopes}"
+    # Managers con node scopes
+    TenantMembership.active.where(role: manager_role).limit(2).each do |m|
+      node_count = m.user.user_node_scopes.kept.where(tenant: tenant).count
+      puts "      Manager #{m.user.email}: #{node_count} node scopes"
     end
 
-    if sample_driver
-      vehicle_scopes_count = UserVehicleScope.where(user: sample_driver)
-        .where("(valid_from IS NULL OR valid_from <= ?) AND (valid_until IS NULL OR valid_until >= ?)",
-               Time.current, Time.current).count
-      puts "    Driver (#{sample_driver.email}):"
-      puts "      - Active Vehicle Access: #{vehicle_scopes_count}"
+    # Drivers con vehicle scopes
+    TenantMembership.active.where(role: driver_role).limit(2).each do |m|
+      vehicle_count = m.user.user_vehicle_scopes.kept.active.where(tenant: tenant).count
+      puts "      Driver #{m.user.email}: #{vehicle_count} vehicle scopes"
     end
   end
 end
+
+puts "\n  ✅ Access scopes seeding completed!"

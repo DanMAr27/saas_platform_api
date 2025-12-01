@@ -1,8 +1,3 @@
-# frozen_string_literal: true
-
-# Migración para la lista negra de tokens JWT (revocación)
-# Cuando un usuario hace logout, su token se agrega aquí para invalidarlo
-
 class CreateJwtBlacklist < ActiveRecord::Migration[8.0]
   def change
     create_table :jwt_blacklists do |t|

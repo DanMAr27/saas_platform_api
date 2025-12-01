@@ -3,12 +3,14 @@
 # Modelo de Role
 # Catálogo de roles para todos los contextos del sistema
 # Un rol define un conjunto de permisos en un contexto específico
+# NUEVO: Con soporte para scope flags (allows_node_scope, allows_vehicle_scope, requires_any_scope)
 
 class Role < ApplicationRecord
   # ============================================
   # CONCERNS
   # ============================================
   include Auditable  # PaperTrail para auditoría
+  include Scopeable  # 🆕 NUEVO: Lógica de scopes
 
   # ============================================
   # CONSTANTES
@@ -51,6 +53,10 @@ class Role < ApplicationRecord
   validates :context, presence: true, inclusion: { in: CONTEXTS }
   validates :priority, presence: true, numericality: { only_integer: true }
 
+  # 🆕 NUEVO: Validaciones de scope (vienen del concern Scopeable)
+  # - validate_scope_exclusivity
+  # - validate_scope_coherence
+
   # Validación custom: no borrar roles del sistema
   validate :cannot_destroy_system_role, on: :destroy, if: :is_system?
 
@@ -69,7 +75,10 @@ class Role < ApplicationRecord
   scope :tenant_roles, -> { where(context: "tenant") }
   scope :system_roles, -> { where(is_system: true) }
   scope :custom_roles, -> { where(is_system: false) }
-  scope :requires_scope, -> { where(requires_scope: true) }
+
+  # 🆕 DEPRECATED: Mantener por compatibilidad pero usar los del concern
+  scope :requires_scope, -> { where(requires_any_scope: true) }
+
   scope :by_priority, -> { order(priority: :asc, name: :asc) }
 
   # ============================================
@@ -106,6 +115,11 @@ class Role < ApplicationRecord
     slug == "tenant_driver"
   end
 
+  # 🆕 DEPRECATED: Mantener por compatibilidad pero usar requires_any_scope?
+  def requires_scope?
+    requires_any_scope?
+  end
+
   # Display
   def display_name
     "#{name} (#{context})"
@@ -115,6 +129,13 @@ class Role < ApplicationRecord
     name
   end
 
+  # 🆕 MEJORADO: Incluir info de scopes
+  def full_description
+    desc = "#{display_name}"
+    desc += " - #{scope_requirements_description}" if tenant_role?
+    desc
+  end
+
   # Estadísticas
   def usage_count
     if platform_role?
@@ -122,6 +143,27 @@ class Role < ApplicationRecord
     else
       tenant_memberships.count
     end
+  end
+
+  # 🆕 NUEVO: Información completa del rol para API
+  def to_detail_hash
+    {
+      id: id,
+      slug: slug,
+      name: name,
+      context: context,
+      description: description,
+      is_system: is_system?,
+      priority: priority,
+      scope_config: {
+        requires_any_scope: requires_any_scope?,
+        allows_node_scope: allows_node_scope?,
+        allows_vehicle_scope: allows_vehicle_scope?,
+        scope_type: scope_type,
+        description: scope_requirements_description
+      },
+      usage_count: usage_count
+    }
   end
 
   # ============================================
@@ -139,15 +181,33 @@ class Role < ApplicationRecord
       where(context: context).by_priority
     end
 
-    # Estadísticas
+    # 🆕 MEJORADO: Estadísticas con info de scopes
     def stats
-      {
+      base_stats = {
         total: count,
         platform: platform_roles.count,
         tenant: tenant_roles.count,
         system: system_roles.count,
         custom: custom_roles.count
       }
+
+      # Agregar distribución de scopes
+      base_stats.merge(scope_distribution)
+    end
+
+    # 🆕 NUEVO: Obtener roles disponibles para asignación
+    # con información de sus requerimientos de scope
+    def available_for_assignment(context:)
+      for_context(context).map do |role|
+        {
+          slug: role.slug,
+          name: role.name,
+          requires_scopes: role.requires_any_scope?,
+          allows_node_scope: role.allows_node_scope?,
+          allows_vehicle_scope: role.allows_vehicle_scope?,
+          description: role.scope_requirements_description
+        }
+      end
     end
   end
 

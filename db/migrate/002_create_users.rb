@@ -1,9 +1,3 @@
-# frozen_string_literal: true
-
-# Migración para crear la tabla de usuarios
-# Incluye todos los campos de Devise más campos personalizados
-# Esta tabla es la identidad base de TODO el sistema (platform y tenant users)
-
 class CreateUsers < ActiveRecord::Migration[8.0]
   def change
     create_table :users do |t|

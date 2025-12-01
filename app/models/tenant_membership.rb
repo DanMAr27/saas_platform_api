@@ -44,6 +44,11 @@ class TenantMembership < ApplicationRecord
   validates :tenant_id, presence: true
   validates :role_id, presence: true
   validates :status, presence: true, inclusion: { in: STATUSES }
+  # 🆕 NUEVO: Validar que el rol tenga los scopes requeridos
+  # Solo validar al ACTIVAR la membresía (no en creación para evitar chicken-egg)
+  validate :role_has_required_scopes, if: -> { status == "active" && !new_record? }
+  validate :role_has_required_scopes_on_activation, if: -> { status_changed? && status == "active" }
+
 
   # CLAVE: Un usuario NO puede tener el mismo rol DOS VECES en un tenant
   # Pero SÍ puede tener DIFERENTES roles en el mismo tenant
@@ -202,6 +207,21 @@ class TenantMembership < ApplicationRecord
     display_name
   end
 
+  # Método público para verificar si tiene scopes válidos
+  def has_valid_scopes?
+    return true unless role.requires_any_scope?
+
+    if role.allows_node_scope?
+      return user.user_node_scopes.kept.exists?(tenant_id: tenant_id)
+    end
+
+    if role.allows_vehicle_scope?
+      return user.user_vehicle_scopes.kept.active.exists?(tenant_id: tenant_id)
+    end
+
+    false
+  end
+
   # ============================================
   # CLASS METHODS
   # ============================================
@@ -304,5 +324,39 @@ class TenantMembership < ApplicationRecord
     unless role.tenant_role?
       errors.add(:role, "must be a tenant role")
     end
+  end
+
+  # Validar que el usuario tenga los scopes requeridos por el rol
+  def role_has_required_scopes
+    return unless role.present?
+    return unless role.requires_any_scope?
+
+    # Verificar si el rol requiere node scopes
+    if role.allows_node_scope?
+      has_node_scopes = user.user_node_scopes
+                            .kept
+                            .exists?(tenant_id: tenant_id)
+
+      unless has_node_scopes
+        errors.add(:base, "Role '#{role.name}' requires at least one node scope")
+      end
+    end
+
+    # Verificar si el rol requiere vehicle scopes
+    if role.allows_vehicle_scope?
+      has_vehicle_scopes = user.user_vehicle_scopes
+                              .kept
+                              .active
+                              .exists?(tenant_id: tenant_id)
+
+      unless has_vehicle_scopes
+        errors.add(:base, "Role '#{role.name}' requires at least one vehicle scope")
+      end
+    end
+  end
+
+  # Validar al cambiar de invited → active
+  def role_has_required_scopes_on_activation
+    role_has_required_scopes
   end
 end

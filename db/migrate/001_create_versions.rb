@@ -1,11 +1,3 @@
-# frozen_string_literal: true
-
-# Migración para la tabla de versiones de PaperTrail
-# Esta tabla almacena el historial completo de cambios en los modelos auditados
-#
-# Generar con: rails generate paper_trail:install
-# O crear manualmente como se muestra aquí
-
 class CreateVersions < ActiveRecord::Migration[8.0]
   # Esta migración es compatible con todas las versiones de PaperTrail
   TEXT_BYTES = 1_073_741_823 # Máximo para PostgreSQL text column

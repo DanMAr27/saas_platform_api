@@ -1,8 +1,3 @@
-# frozen_string_literal: true
-
-# Migración para crear la tabla de Roles
-# Catálogo único de roles para todos los contextos (platform, tenant)
-
 class CreateRoles < ActiveRecord::Migration[8.0]
   def change
     create_table :roles do |t|
@@ -31,6 +26,10 @@ class CreateRoles < ActiveRecord::Migration[8.0]
       # Nivel de prioridad (para ordenar roles)
       t.integer :priority, default: 0, null: false
 
+      t.boolean :allows_node_scope, default: false, null: false
+      t.boolean :allows_vehicle_scope, default: false, null: false
+      t.boolean :requires_any_scope, default: false, null: false
+
       # ============================================
       # METADATA
       # ============================================
@@ -57,6 +56,16 @@ class CreateRoles < ActiveRecord::Migration[8.0]
 
     # Ordenar por prioridad
     add_index :roles, :priority, name: 'index_roles_on_priority'
+
+    # Flags de scopes
+    add_index :roles, :allows_node_scope, name: "index_roles_on_allows_node_scope"
+    add_index :roles, :allows_vehicle_scope, name: "index_roles_on_allows_vehicle_scope"
+    add_index :roles, :requires_any_scope, name: "index_roles_on_requires_any_scope"
+
+    # Índices compuestos
+    add_index :roles, [ :context, :allows_node_scope ], name: "index_roles_on_context_and_node_scope"
+    add_index :roles, [ :context, :allows_vehicle_scope ], name: "index_roles_on_context_and_vehicle_scope"
+
 
     # Índice GIN para settings
     add_index :roles, :settings, using: :gin, name: 'index_roles_on_settings'

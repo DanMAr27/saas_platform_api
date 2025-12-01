@@ -1,8 +1,3 @@
-# frozen_string_literal: true
-
-# Migración para Platform Memberships
-# Usuarios con acceso de nivel plataforma (SuperAdmin, Support)
-
 class CreatePlatformMemberships < ActiveRecord::Migration[8.0]
   def change
     create_table :platform_memberships do |t|

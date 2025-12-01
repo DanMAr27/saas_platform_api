@@ -114,12 +114,20 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.boolean "requires_scope", default: false, null: false
     t.boolean "is_system", default: false, null: false
     t.integer "priority", default: 0, null: false
+    t.boolean "allows_node_scope", default: false, null: false
+    t.boolean "allows_vehicle_scope", default: false, null: false
+    t.boolean "requires_any_scope", default: false, null: false
     t.jsonb "settings", default: {}
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.index ["allows_node_scope"], name: "index_roles_on_allows_node_scope"
+    t.index ["allows_vehicle_scope"], name: "index_roles_on_allows_vehicle_scope"
+    t.index ["context", "allows_node_scope"], name: "index_roles_on_context_and_node_scope"
+    t.index ["context", "allows_vehicle_scope"], name: "index_roles_on_context_and_vehicle_scope"
     t.index ["context"], name: "index_roles_on_context"
     t.index ["is_system"], name: "index_roles_on_is_system"
     t.index ["priority"], name: "index_roles_on_priority"
+    t.index ["requires_any_scope"], name: "index_roles_on_requires_any_scope"
     t.index ["settings"], name: "index_roles_on_settings", using: :gin
     t.index ["slug"], name: "index_roles_on_slug", unique: true
   end

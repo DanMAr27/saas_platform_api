@@ -1,5 +1,3 @@
-# frozen_string_literal: true
-
 # db/seeds.rb
 # Sistema de seeds completo para desarrollo y testing
 

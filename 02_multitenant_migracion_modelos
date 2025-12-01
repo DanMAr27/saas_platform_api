@@ -1,10 +1,3 @@
-
-# Migración para la tabla de versiones de PaperTrail
-# Esta tabla almacena el historial completo de cambios en los modelos auditados
-#
-# Generar con: rails generate paper_trail:install
-# O crear manualmente como se muestra aquí
-
 class CreateVersions < ActiveRecord::Migration[8.0]
   # Esta migración es compatible con todas las versiones de PaperTrail
   TEXT_BYTES = 1_073_741_823 # Máximo para PostgreSQL text column
@@ -66,11 +59,6 @@ class CreateVersions < ActiveRecord::Migration[8.0]
               name: 'index_versions_on_tenant_id'
   end
 end
-# frozen_string_literal: true
-
-# Migración para crear la tabla de usuarios
-# Incluye todos los campos de Devise más campos personalizados
-# Esta tabla es la identidad base de TODO el sistema (platform y tenant users)
 
 class CreateUsers < ActiveRecord::Migration[8.0]
   def change
@@ -167,111 +155,6 @@ class CreateUsers < ActiveRecord::Migration[8.0]
     add_index :users, :email_verified_at, name: 'index_users_on_email_verified_at'
   end
 end
-# frozen_string_literal: true
-
-# Migración para crear la tabla de usuarios
-# Incluye todos los campos de Devise más campos personalizados
-# Esta tabla es la identidad base de TODO el sistema (platform y tenant users)
-
-class CreateUsers < ActiveRecord::Migration[8.0]
-  def change
-    create_table :users do |t|
-      # ============================================
-      # DEVISE: Database Authenticatable
-      # ============================================
-      t.string :email, null: false, default: ""
-      t.string :encrypted_password, null: false, default: ""
-
-      # ============================================
-      # DEVISE: Recoverable
-      # ============================================
-      t.string   :reset_password_token
-      t.datetime :reset_password_sent_at
-
-      # ============================================
-      # DEVISE: Rememberable
-      # ============================================
-      t.datetime :remember_created_at
-
-      # ============================================
-      # DEVISE: Trackable
-      # ============================================
-      t.integer  :sign_in_count, default: 0, null: false
-      t.datetime :current_sign_in_at
-      t.datetime :last_sign_in_at
-      t.string   :current_sign_in_ip
-      t.string   :last_sign_in_ip
-
-      # ============================================
-      # DEVISE: Lockable
-      # ============================================
-      t.integer  :failed_attempts, default: 0, null: false
-      t.string   :unlock_token
-      t.datetime :locked_at
-
-      # ============================================
-      # CAMPOS PERSONALIZADOS
-      # ============================================
-
-      # Información personal
-      t.string :first_name, limit: 100, null: false
-      t.string :last_name, limit: 100, null: false
-      t.string :phone, limit: 20
-      t.string :avatar_url, limit: 500
-
-      # Verificación de email
-      t.datetime :email_verified_at
-
-      # Sistema de invitaciones
-      t.string :invitation_token, limit: 64
-      t.datetime :invitation_expires_at
-      t.datetime :invitation_accepted_at
-      t.bigint :invited_by_id # FK a users.id
-
-      # Último login (adicional a Devise trackable)
-      t.datetime :last_login_at
-
-      # ============================================
-      # SOFT DELETE
-      # ============================================
-      t.datetime :deleted_at
-      t.bigint :deleted_by # FK a users.id
-
-      # ============================================
-      # TIMESTAMPS
-      # ============================================
-      t.timestamps
-    end
-
-    # ============================================
-    # ÍNDICES
-    # ============================================
-
-    # Email único (principal método de login)
-    add_index :users, :email, unique: true, name: 'index_users_on_email'
-
-    # Índices de Devise
-    add_index :users, :reset_password_token, unique: true, name: 'index_users_on_reset_password_token'
-    add_index :users, :unlock_token, unique: true, name: 'index_users_on_unlock_token'
-
-    # Invitaciones
-    add_index :users, :invitation_token, unique: true, name: 'index_users_on_invitation_token'
-    add_index :users, :invited_by_id, name: 'index_users_on_invited_by_id'
-
-    # Soft delete (para queries de usuarios activos)
-    add_index :users, :deleted_at, name: 'index_users_on_deleted_at'
-
-    # Búsquedas por nombre
-    add_index :users, [ :first_name, :last_name ], name: 'index_users_on_first_name_and_last_name'
-
-    # Email verificado (para filtrar usuarios verificados)
-    add_index :users, :email_verified_at, name: 'index_users_on_email_verified_at'
-  end
-end
-# frozen_string_literal: true
-
-# Migración para la lista negra de tokens JWT (revocación)
-# Cuando un usuario hace logout, su token se agrega aquí para invalidarlo
 
 class CreateJwtBlacklist < ActiveRecord::Migration[8.0]
   def change
@@ -298,10 +181,80 @@ class CreateJwtBlacklist < ActiveRecord::Migration[8.0]
     add_foreign_key :jwt_blacklists, :users, column: :user_id, on_delete: :cascade
   end
 end
-# frozen_string_literal: true
 
-# Migración para crear la tabla de Tenants (organizaciones/clientes)
-# Cada tenant es un espacio aislado con sus propios datos
+class CreateRoles < ActiveRecord::Migration[8.0]
+  def change
+    create_table :roles do |t|
+      # ============================================
+      # IDENTIFICACIÓN
+      # ============================================
+      t.string :name, null: false, limit: 100
+      t.string :slug, null: false, limit: 100
+      t.text :description
+
+      # ============================================
+      # CONTEXTO
+      # ============================================
+      # Contexto: 'platform', 'tenant'
+      t.string :context, null: false, limit: 20
+
+      # ============================================
+      # CONFIGURACIÓN
+      # ============================================
+      # ¿Requiere scopes adicionales? (ej: nodos, vehículos)
+      t.boolean :requires_scope, default: false, null: false
+
+      # ¿Es un rol del sistema? (no se puede borrar)
+      t.boolean :is_system, default: false, null: false
+
+      # Nivel de prioridad (para ordenar roles)
+      t.integer :priority, default: 0, null: false
+
+      t.boolean :allows_node_scope, default: false, null: false
+      t.boolean :allows_vehicle_scope, default: false, null: false
+      t.boolean :requires_any_scope, default: false, null: false
+
+      # ============================================
+      # METADATA
+      # ============================================
+      t.jsonb :settings, default: {}
+
+      # ============================================
+      # TIMESTAMPS
+      # ============================================
+      t.timestamps
+    end
+
+    # ============================================
+    # ÍNDICES
+    # ============================================
+
+    # Slug único
+    add_index :roles, :slug, unique: true, name: 'index_roles_on_slug'
+
+    # Búsqueda por contexto
+    add_index :roles, :context, name: 'index_roles_on_context'
+
+    # Solo roles del sistema
+    add_index :roles, :is_system, name: 'index_roles_on_is_system'
+
+    # Ordenar por prioridad
+    add_index :roles, :priority, name: 'index_roles_on_priority'
+
+    # Flags de scopes
+    add_index :roles, :allows_node_scope, name: "index_roles_on_allows_node_scope"
+    add_index :roles, :allows_vehicle_scope, name: "index_roles_on_allows_vehicle_scope"
+    add_index :roles, :requires_any_scope, name: "index_roles_on_requires_any_scope"
+
+    # Índices compuestos
+    add_index :roles, [ :context, :allows_node_scope ], name: "index_roles_on_context_and_node_scope"
+    add_index :roles, [ :context, :allows_vehicle_scope ], name: "index_roles_on_context_and_vehicle_scope"
+
+
+    # Índice GIN para settings
+    add_index :roles, :settings, using: :gin, name: 'index_roles_on_settings'
+  end
+end
 
 class CreateTenants < ActiveRecord::Migration[8.0]
   def change
@@ -398,10 +351,6 @@ class CreateTenants < ActiveRecord::Migration[8.0]
     add_foreign_key :tenants, :users, column: :created_by, on_delete: :nullify
   end
 end
-# frozen_string_literal: true
-
-# Migración para la relación User ↔ Tenant ↔ Role
-# Permite que un usuario pertenezca a múltiples tenants con diferentes roles
 
 class CreateTenantMemberships < ActiveRecord::Migration[8.0]
   def change
@@ -414,7 +363,7 @@ class CreateTenantMemberships < ActiveRecord::Migration[8.0]
 
       # Rol del usuario en este tenant (por ahora como string, en Fase 3 será FK)
       # Roles: 'admin', 'manager', 'driver'
-      t.string :role, null: false, limit: 50, default: 'driver'
+      t.bigint :role_id, null: false
 
       # ============================================
       # METADATA DE LA MEMBRESÍA
@@ -451,9 +400,13 @@ class CreateTenantMemberships < ActiveRecord::Migration[8.0]
     # ÍNDICES
     # ============================================
 
+    # Índice para role_id (de la segunda migración)
+    add_index :tenant_memberships, :role_id, name: 'index_tenant_memberships_on_role_id'
+
     # Combinación única: un usuario no puede tener el mismo rol dos veces en un tenant
+    # *** CAMBIO AQUÍ: Ahora usa role_id en lugar de role (string) ***
     add_index :tenant_memberships,
-              [ :user_id, :tenant_id, :role ],
+              [ :user_id, :tenant_id, :role_id ], # <-- Usamos role_id
               unique: true,
               name: 'index_tenant_memberships_on_user_tenant_role',
               where: 'deleted_at IS NULL'
@@ -487,79 +440,12 @@ class CreateTenantMemberships < ActiveRecord::Migration[8.0]
     # ============================================
     # FOREIGN KEYS
     # ============================================
+    add_foreign_key :tenant_memberships, :roles, column: :role_id, on_delete: :restrict
     add_foreign_key :tenant_memberships, :users, column: :user_id, on_delete: :cascade
     add_foreign_key :tenant_memberships, :tenants, column: :tenant_id, on_delete: :cascade
     add_foreign_key :tenant_memberships, :users, column: :created_by, on_delete: :nullify
   end
 end
-# frozen_string_literal: true
-
-# Migración para crear la tabla de Roles
-# Catálogo único de roles para todos los contextos (platform, tenant)
-
-class CreateRoles < ActiveRecord::Migration[8.0]
-  def change
-    create_table :roles do |t|
-      # ============================================
-      # IDENTIFICACIÓN
-      # ============================================
-      t.string :name, null: false, limit: 100
-      t.string :slug, null: false, limit: 100
-      t.text :description
-
-      # ============================================
-      # CONTEXTO
-      # ============================================
-      # Contexto: 'platform', 'tenant'
-      t.string :context, null: false, limit: 20
-
-      # ============================================
-      # CONFIGURACIÓN
-      # ============================================
-      # ¿Requiere scopes adicionales? (ej: nodos, vehículos)
-      t.boolean :requires_scope, default: false, null: false
-
-      # ¿Es un rol del sistema? (no se puede borrar)
-      t.boolean :is_system, default: false, null: false
-
-      # Nivel de prioridad (para ordenar roles)
-      t.integer :priority, default: 0, null: false
-
-      # ============================================
-      # METADATA
-      # ============================================
-      t.jsonb :settings, default: {}
-
-      # ============================================
-      # TIMESTAMPS
-      # ============================================
-      t.timestamps
-    end
-
-    # ============================================
-    # ÍNDICES
-    # ============================================
-
-    # Slug único
-    add_index :roles, :slug, unique: true, name: 'index_roles_on_slug'
-
-    # Búsqueda por contexto
-    add_index :roles, :context, name: 'index_roles_on_context'
-
-    # Solo roles del sistema
-    add_index :roles, :is_system, name: 'index_roles_on_is_system'
-
-    # Ordenar por prioridad
-    add_index :roles, :priority, name: 'index_roles_on_priority'
-
-    # Índice GIN para settings
-    add_index :roles, :settings, using: :gin, name: 'index_roles_on_settings'
-  end
-end
-# frozen_string_literal: true
-
-# Migración para Platform Memberships
-# Usuarios con acceso de nivel plataforma (SuperAdmin, Support)
 
 class CreatePlatformMemberships < ActiveRecord::Migration[8.0]
   def change
@@ -629,28 +515,6 @@ class CreatePlatformMemberships < ActiveRecord::Migration[8.0]
     add_foreign_key :platform_memberships, :users, column: :user_id, on_delete: :cascade
     add_foreign_key :platform_memberships, :roles, column: :role_id, on_delete: :restrict
     add_foreign_key :platform_memberships, :users, column: :created_by, on_delete: :nullify
-  end
-end
-# frozen_string_literal: true
-
-# Migración para actualizar TenantMemberships con role_id
-# Mantiene la columna 'role' como string por compatibilidad
-# y agrega role_id como FK a la tabla roles
-
-class UpdateTenantMembershipsWithRoleId < ActiveRecord::Migration[8.0]
-  def change
-    # Agregar columna role_id
-    add_column :tenant_memberships, :role_id, :bigint
-
-    # Agregar índice
-    add_index :tenant_memberships, :role_id, name: 'index_tenant_memberships_on_role_id'
-
-    # Agregar foreign key
-    add_foreign_key :tenant_memberships, :roles, column: :role_id, on_delete: :restrict
-
-    # Nota: No eliminamos la columna 'role' (string) para mantener compatibilidad
-    # En el futuro, una vez migrados todos los datos, se puede eliminar
-    # con otra migración
   end
 end
 
@@ -833,6 +697,7 @@ class CreateUserNodeScopes < ActiveRecord::Migration[8.0]
     add_foreign_key :user_node_scopes, :users, column: :created_by, on_delete: :nullify
   end
 end
+
 # db/migrate/XXXXXX_create_vehicles.rb
 # Vehículos de la flota
 
@@ -903,23 +768,47 @@ class CreateVehicles < ActiveRecord::Migration[8.0]
   end
 end
 
-# db/migrate/XXXXXX_create_user_vehicle_scopes.rb
-# Scopes de acceso a vehículos específicos para usuarios
+# db/migrate/XXXXXX_create_vehicles.rb
+# Vehículos de la flota
 
-class CreateUserVehicleScopes < ActiveRecord::Migration[8.0]
+class CreateVehicles < ActiveRecord::Migration[8.0]
   def change
-    create_table :user_vehicle_scopes do |t|
-      # Relación usuario-vehículo
-      t.bigint :user_id, null: false
-      t.bigint :vehicle_id, null: false
+    create_table :vehicles do |t|
+      # Relación con tenant
       t.bigint :tenant_id, null: false
 
-      # Tipo de acceso
-      t.string :access_type, limit: 20, default: 'read', null: false # read, write, drive
+      # Relación con nodo organizacional (opcional)
+      t.bigint :organizational_node_id
 
-      # Periodo de acceso (opcional)
-      t.datetime :valid_from
-      t.datetime :valid_until
+      # Identificación del vehículo
+      t.string :name, null: false, limit: 255
+      t.string :license_plate, null: false, limit: 20
+      t.string :vin, limit: 50 # Vehicle Identification Number
+      t.string :fleet_number, limit: 50
+
+      # Tipo y marca
+      t.string :vehicle_type, limit: 50 # car, truck, van, motorcycle, etc.
+      t.string :make, limit: 100 # Marca
+      t.string :model, limit: 100 # Modelo
+      t.integer :year
+
+      # Estado y mantenimiento
+      t.string :status, limit: 20, default: 'active', null: false
+      t.date :purchase_date
+      t.date :registration_expires_at
+      t.date :insurance_expires_at
+      t.date :last_maintenance_date
+      t.integer :odometer # Kilometraje actual
+
+      # Características
+      t.string :color, limit: 50
+      t.string :fuel_type, limit: 20 # gasoline, diesel, electric, hybrid
+      t.decimal :fuel_capacity, precision: 10, scale: 2
+      t.integer :passenger_capacity
+
+      # Metadata y configuración
+      t.jsonb :metadata, default: {}
+      t.jsonb :specifications, default: {}
 
       # Auditoría
       t.bigint :created_by
@@ -930,22 +819,22 @@ class CreateUserVehicleScopes < ActiveRecord::Migration[8.0]
     end
 
     # Índices
-    add_index :user_vehicle_scopes, :user_id
-    add_index :user_vehicle_scopes, :vehicle_id
-    add_index :user_vehicle_scopes, :tenant_id
-    add_index :user_vehicle_scopes, [ :user_id, :vehicle_id, :tenant_id ],
+    add_index :vehicles, :tenant_id
+    add_index :vehicles, :organizational_node_id
+    add_index :vehicles, [ :tenant_id, :license_plate ],
               unique: true,
-              name: 'index_user_vehicle_scopes_unique',
               where: 'deleted_at IS NULL'
-    add_index :user_vehicle_scopes, :deleted_at
-    add_index :user_vehicle_scopes, :valid_from
-    add_index :user_vehicle_scopes, :valid_until
+    add_index :vehicles, [ :tenant_id, :fleet_number ],
+              unique: true,
+              where: 'fleet_number IS NOT NULL AND deleted_at IS NULL'
+    add_index :vehicles, :status
+    add_index :vehicles, :vehicle_type
+    add_index :vehicles, :deleted_at
 
     # Foreign keys
-    add_foreign_key :user_vehicle_scopes, :users, on_delete: :cascade
-    add_foreign_key :user_vehicle_scopes, :vehicles, on_delete: :cascade
-    add_foreign_key :user_vehicle_scopes, :tenants, on_delete: :cascade
-    add_foreign_key :user_vehicle_scopes, :users, column: :created_by, on_delete: :nullify
+    add_foreign_key :vehicles, :tenants, on_delete: :cascade
+    add_foreign_key :vehicles, :organizational_nodes, on_delete: :nullify
+    add_foreign_key :vehicles, :users, column: :created_by, on_delete: :nullify
   end
 end
 
@@ -1044,6 +933,186 @@ module Auditable
   # Incluir los métodos
   include InstanceMethods
   extend ClassMethods
+end
+
+# app/models/concerns/scopeable.rb
+# Concern para gestionar la lógica de scopes según roles
+# Define qué tipos de scopes requiere/permite cada rol
+
+module Scopeable
+  extend ActiveSupport::Concern
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Verificar si el rol permite node scopes
+  def allows_node_scope?
+    allows_node_scope == true
+  end
+
+  # Verificar si el rol permite vehicle scopes
+  def allows_vehicle_scope?
+    allows_vehicle_scope == true
+  end
+
+  # Verificar si el rol requiere algún tipo de scope
+  def requires_any_scope?
+    requires_any_scope == true
+  end
+
+  # Obtener el tipo de scope que permite este rol
+  # Retorna: 'node', 'vehicle', o nil
+  def scope_type
+    return nil unless requires_any_scope?
+    return "node" if allows_node_scope?
+    return "vehicle" if allows_vehicle_scope?
+    nil
+  end
+
+  # Obtener todos los tipos de scope permitidos (array)
+  # Útil para roles futuros que puedan permitir múltiples tipos
+  def allowed_scope_types
+    types = []
+    types << "node" if allows_node_scope?
+    types << "vehicle" if allows_vehicle_scope?
+    types
+  end
+
+  # Verificar si un scope es compatible con este rol
+  def compatible_with_scope?(scope_type)
+    case scope_type.to_s
+    when "node"
+      allows_node_scope?
+    when "vehicle"
+      allows_vehicle_scope?
+    else
+      false
+    end
+  end
+
+  # Validar que los scopes proporcionados sean compatibles con el rol
+  # Params:
+  #   node_scopes: array de hashes con node scope data
+  #   vehicle_scopes: array de hashes con vehicle scope data
+  # Returns: { valid: true/false, errors: [] }
+  def validate_scope_compatibility(node_scopes: nil, vehicle_scopes: nil)
+    errors = []
+
+    # Si el rol no requiere scopes
+    unless requires_any_scope?
+      if node_scopes.present? || vehicle_scopes.present?
+        errors << "Role '#{name}' does not require or accept scopes"
+      end
+      return { valid: errors.empty?, errors: errors }
+    end
+
+    # Si el rol requiere scopes, debe tener al menos uno
+    if node_scopes.blank? && vehicle_scopes.blank?
+      errors << "Role '#{name}' requires at least one scope assignment"
+      return { valid: false, errors: errors }
+    end
+
+    # Validar node scopes
+    if node_scopes.present?
+      unless allows_node_scope?
+        errors << "Role '#{name}' does not accept node scopes"
+      end
+    end
+
+    # Validar vehicle scopes
+    if vehicle_scopes.present?
+      unless allows_vehicle_scope?
+        errors << "Role '#{name}' does not accept vehicle scopes"
+      end
+    end
+
+    # Si el rol requiere un tipo específico, verificar que esté presente
+    if allows_node_scope? && node_scopes.blank?
+      errors << "Role '#{name}' requires at least one node scope"
+    end
+
+    if allows_vehicle_scope? && vehicle_scopes.blank?
+      errors << "Role '#{name}' requires at least one vehicle scope"
+    end
+
+    { valid: errors.empty?, errors: errors }
+  end
+
+  # Descripción legible de los scopes requeridos
+  def scope_requirements_description
+    return "No scopes required (full access)" unless requires_any_scope?
+
+    types = []
+    types << "node access" if allows_node_scope?
+    types << "vehicle access" if allows_vehicle_scope?
+
+    "Requires: #{types.join(' or ')}"
+  end
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class_methods do
+    # Obtener roles que requieren node scopes
+    def requiring_node_scopes
+      where(allows_node_scope: true, requires_any_scope: true)
+    end
+
+    # Obtener roles que requieren vehicle scopes
+    def requiring_vehicle_scopes
+      where(allows_vehicle_scope: true, requires_any_scope: true)
+    end
+
+    # Obtener roles sin scopes (acceso total)
+    def without_scope_requirements
+      where(requires_any_scope: false)
+    end
+
+    # Obtener roles que requieren algún tipo de scope
+    def with_scope_requirements
+      where(requires_any_scope: true)
+    end
+
+    # Estadísticas de distribución de scopes
+    def scope_distribution
+      {
+        total: count,
+        requiring_scopes: with_scope_requirements.count,
+        without_scopes: without_scope_requirements.count,
+        node_scope_roles: requiring_node_scopes.count,
+        vehicle_scope_roles: requiring_vehicle_scopes.count
+      }
+    end
+  end
+
+  # ============================================
+  # VALIDACIONES
+  # ============================================
+
+  included do
+    # Validar exclusividad: un rol no puede permitir ambos tipos simultáneamente
+    # (según tu modelo de negocio: 1 rol = 1 tipo de scope)
+    validate :validate_scope_exclusivity, if: :requires_any_scope?
+
+    # Validar coherencia: si requiere scopes, debe permitir al menos un tipo
+    validate :validate_scope_coherence, if: :requires_any_scope?
+  end
+
+  private
+
+  def validate_scope_exclusivity
+    if allows_node_scope? && allows_vehicle_scope?
+      errors.add(:base, "Role cannot allow both node and vehicle scopes simultaneously")
+    end
+  end
+
+  def validate_scope_coherence
+    unless allows_node_scope? || allows_vehicle_scope?
+      errors.add(:base, "Role requires scopes but doesn't allow any scope type")
+    end
+  end
 end
 
 # frozen_string_literal: true
@@ -1409,6 +1478,567 @@ class JwtBlacklist < ApplicationRecord
   end
 end
 
+# app/models/organizational_node_closure.rb
+# Tabla de closure para queries jerárquicas eficientes
+
+class OrganizationalNodeClosure < ApplicationRecord
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :ancestor, class_name: "OrganizationalNode"
+  belongs_to :descendant, class_name: "OrganizationalNode"
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :ancestor_id, presence: true
+  validates :descendant_id, presence: true
+  validates :depth, presence: true,
+            numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :direct_children, -> { where(depth: 1) }
+  scope :self_references, -> { where("ancestor_id = descendant_id") }
+  scope :excluding_self, -> { where("ancestor_id != descendant_id") }
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Reconstruir toda la closure table (útil para migraciones)
+    def rebuild!
+      transaction do
+        delete_all
+
+        OrganizationalNode.find_each do |node|
+          # Self-reference
+          create!(ancestor_id: node.id, descendant_id: node.id, depth: 0)
+
+          # Ancestros
+          node.parent&.ancestor_closures&.each do |closure|
+            create!(
+              ancestor_id: closure.ancestor_id,
+              descendant_id: node.id,
+              depth: closure.depth + 1
+            )
+          end
+        end
+      end
+    end
+
+    # Verificar integridad
+    def verify_integrity
+      errors = []
+
+      # Verificar que todos los nodos tienen self-reference
+      OrganizationalNode.find_each do |node|
+        unless exists?(ancestor_id: node.id, descendant_id: node.id, depth: 0)
+          errors << "Missing self-reference for node #{node.id}"
+        end
+      end
+
+      errors
+    end
+  end
+end
+
+# app/models/organizational_node_level.rb
+
+class OrganizationalNodeLevel < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+  include Tenantable
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :tenant
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  has_many :organizational_nodes, foreign_key: :level_id, dependent: :restrict_with_error
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :name, presence: true, length: { maximum: 100 }
+  validates :slug, presence: true,
+            uniqueness: { scope: :tenant_id, conditions: -> { where(deleted_at: nil) } },
+            format: { with: /\A[a-z0-9_]+\z/, message: "only lowercase, numbers and underscores" }
+  validates :level_order, presence: true, numericality: { only_integer: true, greater_than: 0 }
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  before_validation :generate_slug, if: -> { slug.blank? }
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :by_order, -> { order(:level_order, :name) }
+  scope :system_levels, -> { where(is_system: true) }
+  scope :custom_levels, -> { where(is_system: false) }
+  scope :allows_vehicles, -> { where(allows_vehicles: true) }
+  scope :allows_users, -> { where(allows_users: true) }
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Crear niveles base del sistema
+    def create_default_levels_for_tenant(tenant)
+      [
+        { name: "Company", slug: "company", level_order: 1, is_system: true },
+        { name: "Region", slug: "region", level_order: 2, is_system: true },
+        { name: "Branch", slug: "branch", level_order: 3, is_system: true },
+        { name: "Department", slug: "department", level_order: 4, is_system: true }
+      ].each do |level_attrs|
+        find_or_create_by!(tenant: tenant, slug: level_attrs[:slug]) do |level|
+          level.name = level_attrs[:name]
+          level.level_order = level_attrs[:level_order]
+          level.is_system = level_attrs[:is_system]
+          level.allows_vehicles = true
+          level.allows_users = true
+        end
+      end
+    end
+  end
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  def display_name
+    "#{name} (Level #{level_order})"
+  end
+
+  def to_s
+    name
+  end
+
+  # Verificar si hay nodos en este nivel
+  def has_nodes?
+    organizational_nodes.exists?
+  end
+
+  # Obtener el siguiente nivel inferior
+  def next_level
+    self.class.where(tenant_id: tenant_id)
+              .where("level_order > ?", level_order)
+              .order(:level_order)
+              .first
+  end
+
+  # Obtener el nivel superior
+  def previous_level
+    self.class.where(tenant_id: tenant_id)
+              .where("level_order < ?", level_order)
+              .order(level_order: :desc)
+              .first
+  end
+
+  private
+
+  def generate_slug
+    return if name.blank?
+    self.slug = name.parameterize.underscore
+  end
+end
+
+# app/models/organizational_node.rb
+# Nodo de la estructura organizacional (sucursal, división, departamento)
+
+class OrganizationalNode < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+  include Tenantable
+
+  # ============================================
+  # ENUMS
+  # ============================================
+  STATUSES = %w[active inactive].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :tenant
+  belongs_to :level, class_name: "OrganizationalNodeLevel", foreign_key: :level_id
+  belongs_to :parent, class_name: "OrganizationalNode", optional: true
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  has_many :children, class_name: "OrganizationalNode",
+           foreign_key: :parent_id,
+           dependent: :restrict_with_error
+
+  # Closure table associations
+  has_many :ancestor_closures, class_name: "OrganizationalNodeClosure",
+           foreign_key: :descendant_id,
+           dependent: :destroy
+  has_many :descendant_closures, class_name: "OrganizationalNodeClosure",
+           foreign_key: :ancestor_id,
+           dependent: :destroy
+
+  has_many :ancestors, through: :ancestor_closures, source: :ancestor
+  has_many :descendants, through: :descendant_closures, source: :descendant
+
+  # 🆕 NUEVO: Asociación con vehículos (ajusta según tu modelo)
+  has_many :vehicles, dependent: :restrict_with_error
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :name, presence: true, length: { maximum: 255 }
+  validates :status, inclusion: { in: STATUSES }
+  validates :code, uniqueness: { scope: :tenant_id, allow_nil: true, conditions: -> { where(deleted_at: nil) } }
+  validates :email, format: { with: URI::MailTo::EMAIL_REGEXP, allow_blank: true }
+  validate :parent_must_be_higher_level
+  validate :parent_must_be_same_tenant
+  validate :prevent_circular_reference
+
+  # 🆕 NUEVO: Validar que el nivel permita vehículos si hay vehículos asignados
+  validate :level_allows_vehicles, if: :has_vehicles?
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  after_create :create_closure_records
+  after_update :update_closure_records, if: :saved_change_to_parent_id?
+  before_destroy :check_if_has_children
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :active, -> { where(status: "active") }
+  scope :inactive, -> { where(status: "inactive") }
+  scope :roots, -> { where(parent_id: nil) }
+  scope :by_level, ->(level_id) { where(level_id: level_id) }
+  scope :by_name, -> { order(:name) }
+  scope :with_level, -> { includes(:level) }
+  scope :leaves, -> { where.not(id: select(:parent_id).distinct) }
+
+  # 🆕 NUEVO: Scopes adicionales para filtrado
+  scope :allows_vehicles, -> { joins(:level).where(organizational_node_levels: { allows_vehicles: true }) }
+  scope :allows_users, -> { joins(:level).where(organizational_node_levels: { allows_users: true }) }
+  scope :with_full_hierarchy, -> { includes(:level, :parent, :ancestors) }
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    # Obtener árbol completo
+    def tree(parent = nil)
+      nodes = parent ? parent.children : roots
+      nodes.active.includes(:level, :children).order(:name)
+    end
+
+    # ✏️ MEJORADO: Ahora acepta separador personalizado
+    def find_by_path(path, tenant:, separator: "/")
+      names = path.split(separator)
+      current_node = nil
+
+      names.each do |name|
+        query = where(tenant: tenant, name: name.strip)
+        query = query.where(parent: current_node)
+        current_node = query.first
+        return nil unless current_node
+      end
+
+      current_node
+    end
+
+    # 🆕 NUEVO: Obtener todas las opciones formateadas para dropdown
+    # Este método es clave para tu caso de uso de selects
+    def dropdown_options(tenant:, only_vehicles: false)
+      scope = where(tenant: tenant).active.with_full_hierarchy
+      scope = scope.allows_vehicles if only_vehicles
+
+      scope.map do |node|
+        {
+          value: node.id,
+          label: node.full_path,                    # Path completo: "Cliente / Sucursal 1 / Dpto 1"
+          level_order: node.level.level_order,
+          level_name: node.level.name,
+          parent_id: node.parent_id,
+          root_name: node.root_node&.name,
+          can_assign_vehicles: node.level.allows_vehicles,
+          can_assign_users: node.level.allows_users
+        }
+      end.sort_by { |opt| opt[:label] }
+    end
+  end
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Verificar si es nodo raíz
+  def root?
+    parent_id.nil?
+  end
+
+  # Verificar si tiene hijos
+  def leaf?
+    children.none?
+  end
+
+  # Verificar si es ancestro de otro nodo
+  def ancestor_of?(other_node)
+    other_node.ancestors.include?(self)
+  end
+
+  # Verificar si es descendiente de otro nodo
+  def descendant_of?(other_node)
+    ancestors.include?(other_node)
+  end
+
+  # Obtener todos los ancestros ordenados (padres, abuelos, etc.)
+  def ancestor_chain
+    ancestors.joins(:level)
+             .where.not(id: id)
+             .order("organizational_node_levels.level_order")
+  end
+
+  # Obtener todos los descendientes ordenados (hijos, nietos, etc.)
+  def descendant_tree
+    descendants.joins(:level)
+               .where.not(id: id)
+               .order("organizational_node_levels.level_order")
+  end
+
+  # Obtener hijos directos activos
+  def direct_children
+    children.active.includes(:level).order(:name)
+  end
+
+  # Obtener profundidad del nodo (0 = raíz, 1 = hijo directo de raíz, etc.)
+  def depth
+    return 0 if root?
+    ancestor_closures.where.not(ancestor_id: id).maximum(:depth) || 0
+  end
+
+  # ✏️ MEJORADO: Ruta completa del nodo usando el nuevo método auxiliar
+  def full_path(separator: " / ")
+    path_array.join(separator)
+  end
+
+  # 🆕 NUEVO: Array con los nombres del path
+  # Ejemplo: ["CarfastCliente", "Sucursal 1", "Departamento1"]
+  def path_array
+    ancestor_chain.pluck(:name).push(name)
+  end
+
+  # 🆕 NUEVO: Array con los IDs del path (útil para reconstruir selección)
+  # Ejemplo: [1, 5, 12]
+  def path_ids
+    ancestor_chain.pluck(:id).push(id)
+  end
+
+  # Ruta completa con códigos (ej: "COMP/REG-N/BCN-01")
+  def code_path(separator: "/")
+    path_nodes = ancestor_chain.to_a + [ self ]
+    path_nodes.map { |n| n.code || n.name }.join(separator)
+  end
+
+  # Obtener raíz del árbol
+  def root_node
+    return self if root?
+    ancestors.roots.first
+  end
+
+  # Obtener todos los hermanos (nodos con el mismo padre)
+  def siblings
+    if parent_id
+      parent.children.where.not(id: id)
+    else
+      self.class.roots.where(tenant_id: tenant_id).where.not(id: id)
+    end
+  end
+
+  # Mover nodo a otro padre
+  def move_to(new_parent)
+    return false if new_parent && new_parent.descendant_of?(self)
+
+    update(parent: new_parent)
+  end
+
+  # Display
+  def display_name
+    "#{name} (#{level.name})"
+  end
+
+  def to_s
+    name
+  end
+
+  # Información de ubicación
+  def location_summary
+    parts = [ address, city, state, postal_code, country ].compact
+    parts.join(", ")
+  end
+
+  # Estadísticas
+  def stats
+    {
+      depth: depth,
+      children_count: children.count,
+      descendants_count: descendants.count,
+      is_root: root?,
+      is_leaf: leaf?
+    }
+  end
+
+  # 🆕 NUEVO: Información para dropdown/select
+  # Devuelve un hash con toda la info necesaria para el frontend
+  def to_dropdown_option
+    {
+      value: id,
+      label: full_path,
+      level_order: level.level_order,
+      level_name: level.name,
+      parent_id: parent_id,
+      root_name: root_node&.name,
+      can_assign_vehicles: level.allows_vehicles,
+      can_assign_users: level.allows_users,
+      path_ids: path_ids
+    }
+  end
+
+  # 🆕 NUEVO: Información completa con jerarquía
+  # Útil para respuestas API detalladas
+  def hierarchy_info
+    {
+      id: id,
+      name: name,
+      code: code,
+      full_path: full_path,
+      path_array: path_array,
+      level: {
+        id: level.id,
+        name: level.name,
+        order: level.level_order
+      },
+      depth: depth,
+      is_root: root?,
+      is_leaf: leaf?,
+      parent: parent ? { id: parent.id, name: parent.name } : nil,
+      children_count: children.count
+    }
+  end
+
+  private
+
+  # Validar que el padre sea de nivel superior
+  def parent_must_be_higher_level
+    return unless parent_id.present? && level_id.present?
+    return unless parent.present?
+
+    if parent.level.level_order >= level.level_order
+      errors.add(:parent_id, "must be of a higher level")
+    end
+  end
+
+  # Validar mismo tenant
+  def parent_must_be_same_tenant
+    return unless parent_id.present?
+    return unless parent.present?
+
+    if parent.tenant_id != tenant_id
+      errors.add(:parent_id, "must belong to the same tenant")
+    end
+  end
+
+  # Prevenir referencia circular
+  def prevent_circular_reference
+    return unless parent_id.present?
+
+    if parent_id == id
+      errors.add(:parent_id, "cannot be itself")
+    elsif parent&.ancestor_of?(self)
+      errors.add(:parent_id, "would create a circular reference")
+    end
+  end
+
+  # 🆕 NUEVO: Validar que el nivel permita vehículos
+  def level_allows_vehicles
+    unless level&.allows_vehicles
+      errors.add(:base, "This organizational level does not allow vehicle assignment")
+    end
+  end
+
+  # 🆕 NUEVO: Helper para validación
+  def has_vehicles?
+    vehicles.any?
+  end
+
+  # Crear registros en closure table
+  def create_closure_records
+    # Self-reference
+    OrganizationalNodeClosure.create!(
+      ancestor_id: id,
+      descendant_id: id,
+      depth: 0
+    )
+
+    # Copiar todos los ancestros del padre
+    if parent_id.present?
+      parent.ancestor_closures.each do |closure|
+        OrganizationalNodeClosure.create!(
+          ancestor_id: closure.ancestor_id,
+          descendant_id: id,
+          depth: closure.depth + 1
+        )
+      end
+    end
+  end
+
+  # Actualizar closure table cuando cambia el padre
+  def update_closure_records
+    # Eliminar closures antiguos (excepto self-reference)
+    OrganizationalNodeClosure.where(descendant_id: id)
+                             .where.not(ancestor_id: id)
+                             .delete_all
+
+    # Recrear closures para el nuevo padre
+    if parent_id.present?
+      parent.ancestor_closures.each do |closure|
+        OrganizationalNodeClosure.create!(
+          ancestor_id: closure.ancestor_id,
+          descendant_id: id,
+          depth: closure.depth + 1
+        )
+      end
+    end
+
+    # Actualizar descendientes
+    update_descendant_closures
+  end
+
+  # Actualizar closures de descendientes
+  def update_descendant_closures
+    descendants.each do |descendant|
+      descendant.send(:update_closure_records)
+    end
+  end
+
+  # Prevenir eliminación si tiene hijos
+  def check_if_has_children
+    if children.exists?
+      errors.add(:base, "Cannot delete node with children")
+      throw :abort
+    end
+  end
+end
+
 # frozen_string_literal: true
 
 # Modelo PlatformMembership
@@ -1596,12 +2226,14 @@ end
 # Modelo de Role
 # Catálogo de roles para todos los contextos del sistema
 # Un rol define un conjunto de permisos en un contexto específico
+# NUEVO: Con soporte para scope flags (allows_node_scope, allows_vehicle_scope, requires_any_scope)
 
 class Role < ApplicationRecord
   # ============================================
   # CONCERNS
   # ============================================
   include Auditable  # PaperTrail para auditoría
+  include Scopeable  # 🆕 NUEVO: Lógica de scopes
 
   # ============================================
   # CONSTANTES
@@ -1644,6 +2276,10 @@ class Role < ApplicationRecord
   validates :context, presence: true, inclusion: { in: CONTEXTS }
   validates :priority, presence: true, numericality: { only_integer: true }
 
+  # 🆕 NUEVO: Validaciones de scope (vienen del concern Scopeable)
+  # - validate_scope_exclusivity
+  # - validate_scope_coherence
+
   # Validación custom: no borrar roles del sistema
   validate :cannot_destroy_system_role, on: :destroy, if: :is_system?
 
@@ -1662,7 +2298,10 @@ class Role < ApplicationRecord
   scope :tenant_roles, -> { where(context: "tenant") }
   scope :system_roles, -> { where(is_system: true) }
   scope :custom_roles, -> { where(is_system: false) }
-  scope :requires_scope, -> { where(requires_scope: true) }
+
+  # 🆕 DEPRECATED: Mantener por compatibilidad pero usar los del concern
+  scope :requires_scope, -> { where(requires_any_scope: true) }
+
   scope :by_priority, -> { order(priority: :asc, name: :asc) }
 
   # ============================================
@@ -1699,6 +2338,11 @@ class Role < ApplicationRecord
     slug == "tenant_driver"
   end
 
+  # 🆕 DEPRECATED: Mantener por compatibilidad pero usar requires_any_scope?
+  def requires_scope?
+    requires_any_scope?
+  end
+
   # Display
   def display_name
     "#{name} (#{context})"
@@ -1708,6 +2352,13 @@ class Role < ApplicationRecord
     name
   end
 
+  # 🆕 MEJORADO: Incluir info de scopes
+  def full_description
+    desc = "#{display_name}"
+    desc += " - #{scope_requirements_description}" if tenant_role?
+    desc
+  end
+
   # Estadísticas
   def usage_count
     if platform_role?
@@ -1715,6 +2366,27 @@ class Role < ApplicationRecord
     else
       tenant_memberships.count
     end
+  end
+
+  # 🆕 NUEVO: Información completa del rol para API
+  def to_detail_hash
+    {
+      id: id,
+      slug: slug,
+      name: name,
+      context: context,
+      description: description,
+      is_system: is_system?,
+      priority: priority,
+      scope_config: {
+        requires_any_scope: requires_any_scope?,
+        allows_node_scope: allows_node_scope?,
+        allows_vehicle_scope: allows_vehicle_scope?,
+        scope_type: scope_type,
+        description: scope_requirements_description
+      },
+      usage_count: usage_count
+    }
   end
 
   # ============================================
@@ -1732,15 +2404,33 @@ class Role < ApplicationRecord
       where(context: context).by_priority
     end
 
-    # Estadísticas
+    # 🆕 MEJORADO: Estadísticas con info de scopes
     def stats
-      {
+      base_stats = {
         total: count,
         platform: platform_roles.count,
         tenant: tenant_roles.count,
         system: system_roles.count,
         custom: custom_roles.count
       }
+
+      # Agregar distribución de scopes
+      base_stats.merge(scope_distribution)
+    end
+
+    # 🆕 NUEVO: Obtener roles disponibles para asignación
+    # con información de sus requerimientos de scope
+    def available_for_assignment(context:)
+      for_context(context).map do |role|
+        {
+          slug: role.slug,
+          name: role.name,
+          requires_scopes: role.requires_any_scope?,
+          allows_node_scope: role.allows_node_scope?,
+          allows_vehicle_scope: role.allows_vehicle_scope?,
+          description: role.scope_requirements_description
+        }
+      end
     end
   end
 
@@ -1782,11 +2472,13 @@ class Role < ApplicationRecord
   end
 end
 
-# frozen_string_literal: true
+# app/models/tenant_membreship.rb
 
 # Modelo TenantMembership
-# Relaciona un User con un Tenant y define su rol dentro del tenant
-# Un usuario puede pertenecer a múltiples tenants con diferentes roles
+# Relaciona un User con un Tenant y define UN rol específico dentro del tenant
+# IMPORTANTE: Un usuario puede tener MÚLTIPLES membresías (roles) en el mismo tenant
+# Ejemplo: John puede ser 'manager' Y 'driver' en el tenant Acme Corp
+#          Esto se logra creando 2 registros TenantMembership separados
 
 class TenantMembership < ApplicationRecord
   # ============================================
@@ -1826,8 +2518,14 @@ class TenantMembership < ApplicationRecord
   validates :tenant_id, presence: true
   validates :role_id, presence: true
   validates :status, presence: true, inclusion: { in: STATUSES }
+  # 🆕 NUEVO: Validar que el rol tenga los scopes requeridos
+  # Solo validar al ACTIVAR la membresía (no en creación para evitar chicken-egg)
+  validate :role_has_required_scopes, if: -> { status == "active" && !new_record? }
+  validate :role_has_required_scopes_on_activation, if: -> { status_changed? && status == "active" }
 
-  # Única combinación de user + tenant + role
+
+  # CLAVE: Un usuario NO puede tener el mismo rol DOS VECES en un tenant
+  # Pero SÍ puede tener DIFERENTES roles en el mismo tenant
   validates :role_id,
             uniqueness: {
               scope: [ :user_id, :tenant_id ],
@@ -1836,6 +2534,7 @@ class TenantMembership < ApplicationRecord
             }
 
   # Solo puede haber un primary admin por tenant
+  # (independiente de cuántos roles tenga el usuario)
   validates :is_primary_admin,
             uniqueness: {
               scope: :tenant_id,
@@ -1848,6 +2547,15 @@ class TenantMembership < ApplicationRecord
   validates :invitation_token,
             uniqueness: true,
             allow_nil: true
+
+  # Solo un tenant por defecto por usuario
+  validates :is_default,
+            uniqueness: {
+              scope: :user_id,
+              conditions: -> { where(is_default: true, deleted_at: nil) },
+              message: "user can only have one default tenant"
+            },
+            if: :is_default?
 
   # Validación custom: no se puede cambiar tenant_id
   validate :tenant_id_immutable, on: :update
@@ -2009,6 +2717,32 @@ class TenantMembership < ApplicationRecord
         .group("roles.name")
         .count
     end
+
+    # Obtener todos los roles de un usuario en un tenant
+    # Retorna un array de Role objects
+    def roles_for_user_in_tenant(user_id, tenant_id)
+      where(user_id: user_id, tenant_id: tenant_id)
+        .active
+        .includes(:role)
+        .map(&:role)
+    end
+
+    # Verificar si un usuario tiene un rol específico en un tenant
+    def user_has_role?(user_id, tenant_id, role_slug)
+      joins(:role)
+        .where(user_id: user_id, tenant_id: tenant_id)
+        .where(roles: { slug: role_slug })
+        .active
+        .exists?
+    end
+
+    # Obtener slugs de roles de un usuario en un tenant
+    def role_slugs_for_user_in_tenant(user_id, tenant_id)
+      joins(:role)
+        .where(user_id: user_id, tenant_id: tenant_id)
+        .active
+        .pluck("roles.slug")
+    end
   end
 
   private
@@ -2049,6 +2783,55 @@ class TenantMembership < ApplicationRecord
     unless role.tenant_role?
       errors.add(:role, "must be a tenant role")
     end
+  end
+
+  # Validar que el usuario tenga los scopes requeridos por el rol
+  def role_has_required_scopes
+    return unless role.present?
+    return unless role.requires_any_scope?
+
+    # Verificar si el rol requiere node scopes
+    if role.allows_node_scope?
+      has_node_scopes = user.user_node_scopes
+                            .kept
+                            .exists?(tenant_id: tenant_id)
+
+      unless has_node_scopes
+        errors.add(:base, "Role '#{role.name}' requires at least one node scope")
+      end
+    end
+
+    # Verificar si el rol requiere vehicle scopes
+    if role.allows_vehicle_scope?
+      has_vehicle_scopes = user.user_vehicle_scopes
+                              .kept
+                              .active
+                              .exists?(tenant_id: tenant_id)
+
+      unless has_vehicle_scopes
+        errors.add(:base, "Role '#{role.name}' requires at least one vehicle scope")
+      end
+    end
+  end
+
+  # Validar al cambiar de invited → active
+  def role_has_required_scopes_on_activation
+    role_has_required_scopes
+  end
+
+  # 🆕 NUEVO: Método público para verificar si tiene scopes válidos
+  def has_valid_scopes?
+    return true unless role.requires_any_scope?
+
+    if role.allows_node_scope?
+      return user.user_node_scopes.kept.exists?(tenant_id: tenant_id)
+    end
+
+    if role.allows_vehicle_scope?
+      return user.user_vehicle_scopes.kept.active.exists?(tenant_id: tenant_id)
+    end
+
+    false
   end
 end
 
@@ -2344,822 +3127,6 @@ class Tenant < ApplicationRecord
   end
 end
 
-# frozen_string_literal: true
-
-# Modelo de Usuario - Identidad base del sistema
-# Gestiona TODOS los usuarios: platform admins, tenant users, etc.
-#
-# Un usuario es único por email en todo el sistema
-# Los roles y permisos se gestionan en tablas auxiliares (memberships)
-
-class User < ApplicationRecord
-  # ============================================
-  # DEVISE MODULES
-  # ============================================
-  devise :database_authenticatable,
-         :recoverable,
-         :trackable,
-         :lockable,
-         :validatable
-
-  # NOTA: NO usamos :registerable porque el registro se hace vía servicios
-  # NOTA: NO usamos :confirmable porque usamos email_verified_at custom
-  # NOTA: NO usamos :rememberable porque usamos JWT (stateless)
-
-  # ============================================
-  # CONCERNS
-  # ============================================
-  include Auditable       # PaperTrail para auditoría
-  include SoftDeletable   # Soft delete con discard
-
-  # NO incluimos Tenantable aquí porque User puede ser cross-tenant
-  # La relación con tenants se maneja vía TenantMembership
-
-  # ============================================
-  # ASSOCIATIONS
-  # ============================================
-
-  # Invitaciones
-  belongs_to :invited_by, class_name: "User", optional: true
-  has_many :invited_users, class_name: "User", foreign_key: :invited_by_id, dependent: :nullify
-
-  # Relaciones con contextos
-  has_one :platform_membership, dependent: :destroy
-  has_many :tenant_memberships, dependent: :destroy
-  has_many :tenants, through: :tenant_memberships
-
-  # Membresías activas
-  has_many :active_tenant_memberships,
-           -> { active },
-           class_name: "TenantMembership"
-  has_many :active_tenants, through: :active_tenant_memberships, source: :tenant
-
-  # Tenant por defecto
-  has_one :default_tenant_membership,
-          -> { where(is_default: true, status: "active") },
-          class_name: "TenantMembership"
-  has_one :default_tenant, through: :default_tenant_membership, source: :tenant
-
-
-  # ============================================
-  # VALIDATIONS
-  # ============================================
-
-  # Email
-  validates :email,
-            presence: true,
-            uniqueness: { case_sensitive: false },
-            format: { with: URI::MailTo::EMAIL_REGEXP }
-
-  # Nombres
-  validates :first_name, presence: true, length: { maximum: 100 }
-  validates :last_name, presence: true, length: { maximum: 100 }
-
-  # Teléfono (opcional pero con formato)
-  validates :phone,
-            length: { maximum: 20 },
-            format: { with: /\A\+?[\d\s\-\(\)]+\z/, allow_blank: true }
-
-  # Token de invitación único si está presente
-  validates :invitation_token, uniqueness: true, allow_nil: true
-
-  # Password solo requerido si no es invitación pendiente
-  validates :password,
-            presence: true,
-            length: { minimum: 8 },
-            if: :password_required?
-
-  # ============================================
-  # CALLBACKS
-  # ============================================
-
-  # Normalizar email antes de validar
-  before_validation :normalize_email
-
-  # ============================================
-  # SCOPES
-  # ============================================
-
-  # Solo usuarios verificados
-  scope :verified, -> { where.not(email_verified_at: nil) }
-  scope :unverified, -> { where(email_verified_at: nil) }
-
-  # Invitaciones pendientes
-  scope :pending_invitation, -> { where.not(invitation_token: nil).where(invitation_accepted_at: nil) }
-  scope :invitation_accepted, -> { where.not(invitation_accepted_at: nil) }
-
-  # Por nombre
-  scope :by_name, -> { order(:first_name, :last_name) }
-  scope :search_by_name, ->(query) {
-    where("LOWER(first_name) LIKE :query OR LOWER(last_name) LIKE :query OR LOWER(email) LIKE :query",
-          query: "%#{query.downcase}%")
-  }
-
-  # Activos (no soft deleted)
-  scope :active, -> { kept }
-
-  # ============================================
-  # INSTANCE METHODS
-  # ============================================
-
-  # Nombre completo
-  def full_name
-    "#{first_name} #{last_name}".strip
-  end
-
-  # Nombre completo con email
-  def display_name
-    "#{full_name} (#{email})"
-  end
-
-  # Iniciales
-  def initials
-    "#{first_name[0]}#{last_name[0]}".upcase
-  end
-
-  # Verificar email
-  def verify_email!
-    update_column(:email_verified_at, Time.current)
-  end
-
-  def email_verified?
-    email_verified_at.present?
-  end
-
-  # Invitaciones
-  def invitation_pending?
-    invitation_token.present? && invitation_accepted_at.nil?
-  end
-
-  def invitation_expired?
-    invitation_expires_at.present? && invitation_expires_at < Time.current
-  end
-
-  def accept_invitation!
-    update!(
-      invitation_accepted_at: Time.current,
-      invitation_token: nil,
-      invitation_expires_at: nil,
-      email_verified_at: Time.current
-    )
-  end
-
-  # Estado de la cuenta
-  def active?
-    !deleted? && !locked_at.present?
-  end
-
-  def locked?
-    locked_at.present?
-  end
-
-  # Contextos (placeholder para Fase 3)
-  def platform_admin?
-    false # Se implementará en Fase 3 con PlatformMembership
-  end
-
-  def support_admin?
-    false # Se implementará en Fase 3 con PlatformMembership
-  end
-
-  def has_tenant_access?(tenant_id)
-    false # Se implementará en Fase 2 con TenantMembership
-  end
-
-  # ============================================
-  # CLASS METHODS
-  # ============================================
-
-  class << self
-    # Buscar por email (case insensitive)
-    def find_by_email(email)
-      find_by("LOWER(email) = ?", email.downcase)
-    end
-
-    # Estadísticas
-    def stats
-      {
-        total: count,
-        verified: verified.count,
-        unverified: unverified.count,
-        pending_invitations: pending_invitation.count,
-        locked: where.not(locked_at: nil).count,
-        deleted: discarded.count
-      }
-    end
-  end
-
-  private
-
-  # ============================================
-  # PRIVATE METHODS
-  # ============================================
-
-  # Normalizar email (lowercase y strip)
-  def normalize_email
-    self.email = email.downcase.strip if email.present?
-  end
-
-  # Password requerido solo si no hay invitación pendiente
-  def password_required?
-    !persisted? || !password.nil? || !password_confirmation.nil?
-  end
-end
-
-# app/models/organizational_node_level.rb
-
-class OrganizationalNodeLevel < ApplicationRecord
-  # ============================================
-  # CONCERNS
-  # ============================================
-  include Auditable
-  include SoftDeletable
-  include Tenantable
-
-  # ============================================
-  # ASSOCIATIONS
-  # ============================================
-  belongs_to :tenant
-  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
-
-  has_many :organizational_nodes, foreign_key: :level_id, dependent: :restrict_with_error
-
-  # ============================================
-  # VALIDATIONS
-  # ============================================
-  validates :name, presence: true, length: { maximum: 100 }
-  validates :slug, presence: true,
-            uniqueness: { scope: :tenant_id, conditions: -> { where(deleted_at: nil) } },
-            format: { with: /\A[a-z0-9_]+\z/, message: "only lowercase, numbers and underscores" }
-  validates :level_order, presence: true, numericality: { only_integer: true, greater_than: 0 }
-
-  # ============================================
-  # CALLBACKS
-  # ============================================
-  before_validation :generate_slug, if: -> { slug.blank? }
-
-  # ============================================
-  # SCOPES
-  # ============================================
-  scope :by_order, -> { order(:level_order, :name) }
-  scope :system_levels, -> { where(is_system: true) }
-  scope :custom_levels, -> { where(is_system: false) }
-  scope :allows_vehicles, -> { where(allows_vehicles: true) }
-  scope :allows_users, -> { where(allows_users: true) }
-
-  # ============================================
-  # CLASS METHODS
-  # ============================================
-
-  class << self
-    # Crear niveles base del sistema
-    def create_default_levels_for_tenant(tenant)
-      [
-        { name: "Company", slug: "company", level_order: 1, is_system: true },
-        { name: "Region", slug: "region", level_order: 2, is_system: true },
-        { name: "Branch", slug: "branch", level_order: 3, is_system: true },
-        { name: "Department", slug: "department", level_order: 4, is_system: true }
-      ].each do |level_attrs|
-        find_or_create_by!(tenant: tenant, slug: level_attrs[:slug]) do |level|
-          level.name = level_attrs[:name]
-          level.level_order = level_attrs[:level_order]
-          level.is_system = level_attrs[:is_system]
-          level.allows_vehicles = true
-          level.allows_users = true
-        end
-      end
-    end
-  end
-
-  # ============================================
-  # INSTANCE METHODS
-  # ============================================
-
-  def display_name
-    "#{name} (Level #{level_order})"
-  end
-
-  def to_s
-    name
-  end
-
-  # Verificar si hay nodos en este nivel
-  def has_nodes?
-    organizational_nodes.exists?
-  end
-
-  # Obtener el siguiente nivel inferior
-  def next_level
-    self.class.where(tenant_id: tenant_id)
-              .where("level_order > ?", level_order)
-              .order(:level_order)
-              .first
-  end
-
-  # Obtener el nivel superior
-  def previous_level
-    self.class.where(tenant_id: tenant_id)
-              .where("level_order < ?", level_order)
-              .order(level_order: :desc)
-              .first
-  end
-
-  private
-
-  def generate_slug
-    return if name.blank?
-    self.slug = name.parameterize.underscore
-  end
-end
-
-# app/models/organizational_node.rb
-# Nodo de la estructura organizacional (sucursal, división, departamento)
-
-class OrganizationalNode < ApplicationRecord
-  # ============================================
-  # CONCERNS
-  # ============================================
-  include Auditable
-  include SoftDeletable
-  include Tenantable
-
-  # ============================================
-  # ENUMS
-  # ============================================
-  STATUSES = %w[active inactive].freeze
-
-  # ============================================
-  # ASSOCIATIONS
-  # ============================================
-  belongs_to :tenant
-  belongs_to :level, class_name: "OrganizationalNodeLevel", foreign_key: :level_id
-  belongs_to :parent, class_name: "OrganizationalNode", optional: true
-  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
-
-  has_many :children, class_name: "OrganizationalNode",
-           foreign_key: :parent_id,
-           dependent: :restrict_with_error
-
-  # Closure table associations
-  has_many :ancestor_closures, class_name: "OrganizationalNodeClosure",
-           foreign_key: :descendant_id,
-           dependent: :destroy
-  has_many :descendant_closures, class_name: "OrganizationalNodeClosure",
-           foreign_key: :ancestor_id,
-           dependent: :destroy
-
-  has_many :ancestors, through: :ancestor_closures, source: :ancestor
-  has_many :descendants, through: :descendant_closures, source: :descendant
-
-  # ============================================
-  # VALIDATIONS
-  # ============================================
-  validates :name, presence: true, length: { maximum: 255 }
-  validates :status, inclusion: { in: STATUSES }
-  validates :code, uniqueness: { scope: :tenant_id, allow_nil: true, conditions: -> { where(deleted_at: nil) } }
-  validates :email, format: { with: URI::MailTo::EMAIL_REGEXP, allow_blank: true }
-  validate :parent_must_be_higher_level
-  validate :parent_must_be_same_tenant
-  validate :prevent_circular_reference
-
-  # ============================================
-  # CALLBACKS
-  # ============================================
-  after_create :create_closure_records
-  after_update :update_closure_records, if: :saved_change_to_parent_id?
-  before_destroy :check_if_has_children
-
-  # ============================================
-  # SCOPES
-  # ============================================
-  scope :active, -> { where(status: "active") }
-  scope :inactive, -> { where(status: "inactive") }
-  scope :roots, -> { where(parent_id: nil) }
-  scope :by_level, ->(level_id) { where(level_id: level_id) }
-  scope :by_name, -> { order(:name) }
-  scope :with_level, -> { includes(:level) }
-
-  # ============================================
-  # CLASS METHODS
-  # ============================================
-
-  class << self
-    # Obtener árbol completo
-    def tree(parent = nil)
-      nodes = parent ? parent.children : roots
-      nodes.active.includes(:level, :children).order(:name)
-    end
-
-    # Buscar por ruta completa (ej: "Company/Region/Branch")
-    def find_by_path(path, tenant:)
-      names = path.split("/")
-      current_node = nil
-
-      names.each do |name|
-        query = where(tenant: tenant, name: name.strip)
-        query = query.where(parent: current_node)
-        current_node = query.first
-        return nil unless current_node
-      end
-
-      current_node
-    end
-  end
-
-  # ============================================
-  # INSTANCE METHODS
-  # ============================================
-
-  # Verificar si es nodo raíz
-  def root?
-    parent_id.nil?
-  end
-
-  # Verificar si tiene hijos
-  def leaf?
-    children.empty?
-  end
-
-  # Verificar si es ancestro de otro nodo
-  def ancestor_of?(other_node)
-    other_node.ancestors.include?(self)
-  end
-
-  # Verificar si es descendiente de otro nodo
-  def descendant_of?(other_node)
-    ancestors.include?(other_node)
-  end
-
-  # Obtener todos los ancestros ordenados (padres, abuelos, etc.)
-  def ancestor_chain
-    ancestors.joins(:level)
-             .where.not(id: id)
-             .order("organizational_node_levels.level_order")
-  end
-
-  # Obtener todos los descendientes ordenados (hijos, nietos, etc.)
-  def descendant_tree
-    descendants.joins(:level)
-               .where.not(id: id)
-               .order("organizational_node_levels.level_order")
-  end
-
-  # Obtener hijos directos activos
-  def direct_children
-    children.active.includes(:level).order(:name)
-  end
-
-  # Obtener profundidad del nodo (0 = raíz, 1 = hijo directo de raíz, etc.)
-  def depth
-    return 0 if root?
-    ancestor_closures.where.not(ancestor_id: id).maximum(:depth) || 0
-  end
-
-  # Ruta completa del nodo (ej: "Company > Region > Branch")
-  def full_path(separator: " > ")
-    ancestor_chain.pluck(:name).push(name).join(separator)
-  end
-
-  # Ruta completa con códigos (ej: "COMP/REG-N/BCN-01")
-  def code_path(separator: "/")
-    path_nodes = ancestor_chain.to_a + [ self ]
-    path_nodes.map { |n| n.code || n.name }.join(separator)
-  end
-
-  # Obtener raíz del árbol
-  def root_node
-    return self if root?
-    ancestors.roots.first
-  end
-
-  # Obtener todos los hermanos (nodos con el mismo padre)
-  def siblings
-    if parent_id
-      parent.children.where.not(id: id)
-    else
-      self.class.roots.where(tenant_id: tenant_id).where.not(id: id)
-    end
-  end
-
-  # Mover nodo a otro padre
-  def move_to(new_parent)
-    return false if new_parent && new_parent.descendant_of?(self)
-
-    update(parent: new_parent)
-  end
-
-  # Display
-  def display_name
-    "#{name} (#{level.name})"
-  end
-
-  def to_s
-    name
-  end
-
-  # Información de ubicación
-  def location_summary
-    parts = [ address, city, state, postal_code, country ].compact
-    parts.join(", ")
-  end
-
-  # Estadísticas
-  def stats
-    {
-      depth: depth,
-      children_count: children.count,
-      descendants_count: descendants.count,
-      is_root: root?,
-      is_leaf: leaf?
-    }
-  end
-
-  private
-
-  # Validar que el padre sea de nivel superior
-  def parent_must_be_higher_level
-    return unless parent_id.present? && level_id.present?
-    return unless parent.present?
-
-    if parent.level.level_order >= level.level_order
-      errors.add(:parent_id, "must be of a higher level")
-    end
-  end
-
-  # Validar mismo tenant
-  def parent_must_be_same_tenant
-    return unless parent_id.present?
-    return unless parent.present?
-
-    if parent.tenant_id != tenant_id
-      errors.add(:parent_id, "must belong to the same tenant")
-    end
-  end
-
-  # Prevenir referencia circular
-  def prevent_circular_reference
-    return unless parent_id.present?
-
-    if parent_id == id
-      errors.add(:parent_id, "cannot be itself")
-    elsif parent&.ancestor_of?(self)
-      errors.add(:parent_id, "would create a circular reference")
-    end
-  end
-
-  # Crear registros en closure table
-  def create_closure_records
-    # Self-reference
-    OrganizationalNodeClosure.create!(
-      ancestor_id: id,
-      descendant_id: id,
-      depth: 0
-    )
-
-    # Copiar todos los ancestros del padre
-    if parent_id.present?
-      parent.ancestor_closures.each do |closure|
-        OrganizationalNodeClosure.create!(
-          ancestor_id: closure.ancestor_id,
-          descendant_id: id,
-          depth: closure.depth + 1
-        )
-      end
-    end
-  end
-
-  # Actualizar closure table cuando cambia el padre
-  def update_closure_records
-    # Eliminar closures antiguos (excepto self-reference)
-    OrganizationalNodeClosure.where(descendant_id: id)
-                             .where.not(ancestor_id: id)
-                             .delete_all
-
-    # Recrear closures para el nuevo padre
-    if parent_id.present?
-      parent.ancestor_closures.each do |closure|
-        OrganizationalNodeClosure.create!(
-          ancestor_id: closure.ancestor_id,
-          descendant_id: id,
-          depth: closure.depth + 1
-        )
-      end
-    end
-
-    # Actualizar descendientes
-    update_descendant_closures
-  end
-
-  # Actualizar closures de descendientes
-  def update_descendant_closures
-    descendants.each do |descendant|
-      descendant.send(:update_closure_records)
-    end
-  end
-
-  # Prevenir eliminación si tiene hijos
-  def check_if_has_children
-    if children.exists?
-      errors.add(:base, "Cannot delete node with children")
-      throw :abort
-    end
-  end
-end
-
-# app/models/organizational_node_closure.rb
-# Tabla de closure para queries jerárquicas eficientes
-
-class OrganizationalNodeClosure < ApplicationRecord
-  # ============================================
-  # ASSOCIATIONS
-  # ============================================
-  belongs_to :ancestor, class_name: "OrganizationalNode"
-  belongs_to :descendant, class_name: "OrganizationalNode"
-
-  # ============================================
-  # VALIDATIONS
-  # ============================================
-  validates :ancestor_id, presence: true
-  validates :descendant_id, presence: true
-  validates :depth, presence: true,
-            numericality: { only_integer: true, greater_than_or_equal_to: 0 }
-
-  # ============================================
-  # SCOPES
-  # ============================================
-  scope :direct_children, -> { where(depth: 1) }
-  scope :self_references, -> { where("ancestor_id = descendant_id") }
-  scope :excluding_self, -> { where("ancestor_id != descendant_id") }
-
-  # ============================================
-  # CLASS METHODS
-  # ============================================
-
-  class << self
-    # Reconstruir toda la closure table (útil para migraciones)
-    def rebuild!
-      transaction do
-        delete_all
-
-        OrganizationalNode.find_each do |node|
-          # Self-reference
-          create!(ancestor_id: node.id, descendant_id: node.id, depth: 0)
-
-          # Ancestros
-          node.parent&.ancestor_closures&.each do |closure|
-            create!(
-              ancestor_id: closure.ancestor_id,
-              descendant_id: node.id,
-              depth: closure.depth + 1
-            )
-          end
-        end
-      end
-    end
-
-    # Verificar integridad
-    def verify_integrity
-      errors = []
-
-      # Verificar que todos los nodos tienen self-reference
-      OrganizationalNode.find_each do |node|
-        unless exists?(ancestor_id: node.id, descendant_id: node.id, depth: 0)
-          errors << "Missing self-reference for node #{node.id}"
-        end
-      end
-
-      errors
-    end
-  end
-end
-
-# app/models/vehicle.rb
-# Vehículo de la flota
-
-class Vehicle < ApplicationRecord
-  # ============================================
-  # CONCERNS
-  # ============================================
-  include Auditable
-  include SoftDeletable
-  include Tenantable
-
-  # ============================================
-  # ENUMS
-  # ============================================
-  STATUSES = %w[active inactive maintenance].freeze
-  VEHICLE_TYPES = %w[car truck van motorcycle bus trailer].freeze
-  FUEL_TYPES = %w[gasoline diesel electric hybrid].freeze
-
-  # ============================================
-  # ASSOCIATIONS
-  # ============================================
-  belongs_to :tenant
-  belongs_to :organizational_node, optional: true
-  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
-
-  has_many :user_vehicle_scopes, dependent: :destroy
-  has_many :scoped_users, through: :user_vehicle_scopes, source: :user
-
-  # ============================================
-  # VALIDATIONS
-  # ============================================
-  validates :name, presence: true, length: { maximum: 255 }
-  validates :license_plate, presence: true,
-            uniqueness: { scope: :tenant_id, conditions: -> { where(deleted_at: nil) } }
-  validates :fleet_number, uniqueness: { scope: :tenant_id, allow_nil: true }
-  validates :status, inclusion: { in: STATUSES }
-  validates :vehicle_type, inclusion: { in: VEHICLE_TYPES }, allow_nil: true
-  validates :fuel_type, inclusion: { in: FUEL_TYPES }, allow_nil: true
-
-  # ============================================
-  # CALLBACKS
-  # ============================================
-  before_validation :normalize_license_plate
-
-  # ============================================
-  # SCOPES
-  # ============================================
-  scope :active, -> { where(status: "active") }
-  scope :inactive, -> { where(status: "inactive") }
-  scope :in_maintenance, -> { where(status: "maintenance") }
-  scope :by_type, ->(type) { where(vehicle_type: type) }
-  scope :by_node, ->(node_id) { where(organizational_node_id: node_id) }
-  scope :by_name, -> { order(:name) }
-  scope :expiring_registration, ->(days = 30) {
-    where("registration_expires_at BETWEEN ? AND ?", Date.current, days.days.from_now)
-  }
-  scope :expiring_insurance, ->(days = 30) {
-    where("insurance_expires_at BETWEEN ? AND ?", Date.current, days.days.from_now)
-  }
-
-  # ============================================
-  # INSTANCE METHODS
-  # ============================================
-
-  # Estado del vehículo
-  def active?
-    status == "active"
-  end
-
-  def in_maintenance?
-    status == "maintenance"
-  end
-
-  # Expiración de documentos
-  def registration_expired?
-    registration_expires_at.present? && registration_expires_at < Date.current
-  end
-
-  def insurance_expired?
-    insurance_expires_at.present? && insurance_expires_at < Date.current
-  end
-
-  def registration_expires_soon?(days = 30)
-    return false unless registration_expires_at.present?
-    registration_expires_at.between?(Date.current, days.days.from_now)
-  end
-
-  def insurance_expires_soon?(days = 30)
-    return false unless insurance_expires_at.present?
-    insurance_expires_at.between?(Date.current, days.days.from_now)
-  end
-
-  # Mantenimiento
-  def requires_maintenance?
-    last_maintenance_date.blank? || last_maintenance_date < 6.months.ago
-  end
-
-  # Acceso
-  def accessible_by?(user)
-    return true if user.platform_admin?
-    return true if user.tenant_admin?(tenant_id)
-
-    user_vehicle_scopes.exists?(user_id: user.id)
-  end
-
-  # Ubicación organizacional
-  def organization_path
-    return "Unassigned" unless organizational_node
-    organizational_node.full_path
-  end
-
-  # Display
-  def display_name
-    "#{name} (#{license_plate})"
-  end
-
-  def to_s
-    display_name
-  end
-
-  private
-
-  def normalize_license_plate
-    self.license_plate = license_plate&.upcase&.strip
-  end
-end
-
 # app/models/user_node_scope.rb
 # Scope de acceso a nodos organizacionales
 
@@ -3319,5 +3286,668 @@ class UserVehicleScope < ApplicationRecord
 
   def set_default_dates
     self.valid_from ||= Time.current
+  end
+end
+
+# app/models/user.rb
+
+# Modelo de Usuario - Identidad base del sistema
+# Gestiona TODOS los usuarios: platform admins, tenant users, etc.
+# Un usuario puede tener múltiples roles en múltiples tenants
+
+class User < ApplicationRecord
+  # ============================================
+  # DEVISE MODULES
+  # ============================================
+  devise :database_authenticatable,
+         :recoverable,
+         :trackable,
+         :lockable,
+         :validatable
+
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+
+  # Invitaciones
+  belongs_to :invited_by, class_name: "User", optional: true
+  has_many :invited_users, class_name: "User", foreign_key: :invited_by_id, dependent: :nullify
+
+  # Relaciones con contextos
+  has_one :platform_membership, dependent: :destroy
+  has_many :tenant_memberships, dependent: :destroy
+  has_many :tenants, through: :tenant_memberships
+
+  # Membresías activas
+  has_many :active_tenant_memberships,
+           -> { active },
+           class_name: "TenantMembership"
+  has_many :active_tenants, through: :active_tenant_memberships, source: :tenant
+
+  # Tenant por defecto
+  has_one :default_tenant_membership,
+          -> { where(is_default: true, status: "active") },
+          class_name: "TenantMembership"
+  has_one :default_tenant, through: :default_tenant_membership, source: :tenant
+
+
+  has_many :user_node_scopes, dependent: :destroy
+  has_many :user_vehicle_scopes, dependent: :destroy
+
+  # Nodos accesibles a través de scopes
+  has_many :accessible_organizational_nodes,
+           through: :user_node_scopes,
+           source: :organizational_node
+
+  # Vehículos accesibles a través de scopes
+  has_many :accessible_vehicles,
+           through: :user_vehicle_scopes,
+           source: :vehicle
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+
+  validates :email,
+            presence: true,
+            uniqueness: { case_sensitive: false },
+            format: { with: URI::MailTo::EMAIL_REGEXP }
+
+  validates :first_name, presence: true, length: { maximum: 100 }
+  validates :last_name, presence: true, length: { maximum: 100 }
+
+  validates :phone,
+            length: { maximum: 20 },
+            format: { with: /\A\+?[\d\s\-\(\)]+\z/, allow_blank: true }
+
+  validates :invitation_token, uniqueness: true, allow_nil: true
+
+  validates :password,
+            presence: true,
+            length: { minimum: 8 },
+            if: :password_required?
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+
+  before_validation :normalize_email
+
+  # ============================================
+  # SCOPES
+  # ============================================
+
+  scope :verified, -> { where.not(email_verified_at: nil) }
+  scope :unverified, -> { where(email_verified_at: nil) }
+  scope :pending_invitation, -> { where.not(invitation_token: nil).where(invitation_accepted_at: nil) }
+  scope :invitation_accepted, -> { where.not(invitation_accepted_at: nil) }
+  scope :by_name, -> { order(:first_name, :last_name) }
+  scope :search_by_name, ->(query) {
+    where("LOWER(first_name) LIKE :query OR LOWER(last_name) LIKE :query OR LOWER(email) LIKE :query",
+          query: "%#{query.downcase}%")
+  }
+  scope :active, -> { kept }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Nombre completo
+  def full_name
+    "#{first_name} #{last_name}".strip
+  end
+
+  def display_name
+    "#{full_name} (#{email})"
+  end
+
+  def initials
+    "#{first_name[0]}#{last_name[0]}".upcase
+  end
+
+  # Verificar email
+  def verify_email!
+    update_column(:email_verified_at, Time.current)
+  end
+
+  def email_verified?
+    email_verified_at.present?
+  end
+
+  # Invitaciones
+  def invitation_pending?
+    invitation_token.present? && invitation_accepted_at.nil?
+  end
+
+  def invitation_expired?
+    invitation_expires_at.present? && invitation_expires_at < Time.current
+  end
+
+  def accept_invitation!
+    update!(
+      invitation_accepted_at: Time.current,
+      invitation_token: nil,
+      invitation_expires_at: nil,
+      email_verified_at: Time.current
+    )
+  end
+
+  # Estado de la cuenta
+  def active?
+    !deleted? && !locked_at.present?
+  end
+
+  def locked?
+    locked_at.present?
+  end
+
+  # ============================================
+  # MULTI-ROL HELPERS
+  # ============================================
+
+  # Obtener todos los roles de un usuario en un tenant específico
+  # Retorna array de Role objects
+  def roles_in_tenant(tenant)
+    tenant_id = tenant.is_a?(Tenant) ? tenant.id : tenant
+    TenantMembership.roles_for_user_in_tenant(id, tenant_id)
+  end
+
+  # Obtener slugs de roles en un tenant
+  # Retorna array de strings ['tenant_admin', 'tenant_manager']
+  def role_slugs_in_tenant(tenant)
+    tenant_id = tenant.is_a?(Tenant) ? tenant.id : tenant
+    TenantMembership.role_slugs_for_user_in_tenant(id, tenant_id)
+  end
+
+  # Verificar si tiene un rol específico en un tenant
+  def has_role_in_tenant?(role_slug, tenant)
+    tenant_id = tenant.is_a?(Tenant) ? tenant.id : tenant
+    TenantMembership.user_has_role?(id, tenant_id, role_slug)
+  end
+
+  # Verificar si tiene CUALQUIERA de los roles en un tenant
+  def has_any_role_in_tenant?(role_slugs, tenant)
+    tenant_id = tenant.is_a?(Tenant) ? tenant.id : tenant
+    user_roles = role_slugs_in_tenant(tenant_id)
+    (user_roles & Array(role_slugs)).any?
+  end
+
+  # Verificar si tiene TODOS los roles en un tenant
+  def has_all_roles_in_tenant?(role_slugs, tenant)
+    tenant_id = tenant.is_a?(Tenant) ? tenant.id : tenant
+    user_roles = role_slugs_in_tenant(tenant_id)
+    (Array(role_slugs) - user_roles).empty?
+  end
+
+  # Obtener el rol de mayor prioridad en un tenant
+  def primary_role_in_tenant(tenant)
+    roles_in_tenant(tenant).min_by(&:priority)
+  end
+
+  # Verificar permisos específicos
+  def admin_in_tenant?(tenant)
+    has_role_in_tenant?("tenant_admin", tenant)
+  end
+
+  def manager_in_tenant?(tenant)
+    has_role_in_tenant?("tenant_manager", tenant)
+  end
+
+  def driver_in_tenant?(tenant)
+    has_role_in_tenant?("tenant_driver", tenant)
+  end
+
+  # Verificar si puede gestionar (admin o manager)
+  def can_manage_in_tenant?(tenant)
+    has_any_role_in_tenant?([ "tenant_admin", "tenant_manager" ], tenant)
+  end
+
+  # ============================================
+  # PLATFORM ADMIN HELPERS
+  # ============================================
+
+  # Verificar si el usuario es Platform Admin
+  def platform_admin?
+    platform_membership.present? &&
+    !platform_membership.deleted? &&
+    platform_membership.role.present?
+  end
+
+  # Verificar si el usuario es Super Admin
+  def super_admin?
+    platform_admin? && platform_membership.role.super_admin?
+  end
+
+  # Verificar si el usuario es Support Admin
+  def support_admin?
+    platform_admin? && platform_membership.role.support_admin?
+  end
+
+  # ============================================
+  # TENANT ACCESS HELPERS
+  # ============================================
+
+  # Verificar si el usuario tiene acceso a un tenant específico
+  def has_tenant_access?(tenant_id)
+    tenant_memberships
+      .active
+      .kept
+      .exists?(tenant_id: tenant_id)
+  end
+
+  # Obtener rol del usuario en un tenant específico
+  def tenant_role(tenant_id)
+    membership = tenant_memberships
+                  .active
+                  .kept
+                  .find_by(tenant_id: tenant_id)
+
+    return nil unless membership
+    membership.role&.slug || membership.role
+  end
+
+  def tenants_with_role(role_slug)
+    tenant_memberships
+      .active
+      .joins(:role)
+      .where(roles: { slug: role_slug })
+      .includes(:tenant)
+      .map(&:tenant)
+  end
+
+  # Verificar si es admin de un tenant
+  def tenant_admin?(tenant_id)
+    membership = tenant_memberships
+                  .active
+                  .kept
+                  .includes(:role)
+                  .find_by(tenant_id: tenant_id)
+
+    return false unless membership
+    membership.role&.tenant_admin? || membership.role == "admin"
+  end
+
+  # Verificar si es manager de un tenant
+  def tenant_manager?(tenant_id)
+    membership = tenant_memberships
+                  .active
+                  .kept
+                  .includes(:role)
+                  .find_by(tenant_id: tenant_id)
+
+    return false unless membership
+    membership.role&.tenant_manager? || membership.role == "manager"
+  end
+
+  # Verificar si es driver de un tenant
+  def tenant_driver?(tenant_id)
+    membership = tenant_memberships
+                  .active
+                  .kept
+                  .includes(:role)
+                  .find_by(tenant_id: tenant_id)
+
+    return false unless membership
+    membership.role&.tenant_driver? || membership.role == "driver"
+  end
+
+  # Verificar si es admin o manager de un tenant
+  def tenant_admin_or_manager?(tenant_id)
+    tenant_admin?(tenant_id) || tenant_manager?(tenant_id)
+  end
+
+  # Obtener resumen de accesos del usuario
+  def access_summary
+    {
+      platform_admin: platform_admin?,
+      super_admin: super_admin?,
+      support_admin: support_admin?,
+      total_tenants: active_tenants.count,
+      default_tenant: default_tenant&.name,
+      tenant_roles: active_tenant_memberships.includes(:tenant, :role).map do |m|
+        {
+          tenant: m.tenant.name,
+          role: m.role.name,
+          status: m.status
+        }
+      end
+    }
+  end
+
+  # Obtener todos los roles del usuario (platform + tenants)
+  def all_roles
+    roles = []
+
+    # Rol de plataforma
+    if platform_membership.present?
+      roles << {
+        context: "platform",
+        role_slug: platform_membership.role.slug,
+        role_name: platform_membership.role.name
+      }
+    end
+
+    # Roles de tenants
+    tenant_memberships.active.kept.includes(:role, :tenant).each do |membership|
+      roles << {
+        context: "tenant",
+        tenant_id: membership.tenant_id,
+        tenant_name: membership.tenant.name,
+        role_slug: membership.role&.slug || membership.role,
+        role_name: membership.role&.name || membership.role.titleize
+      }
+    end
+
+    roles
+  end
+
+  # Obtener todos los tenants del usuario
+  def accessible_tenants
+    active_tenants.kept.where(status: "active")
+  end
+
+  # Verificar si el usuario tiene múltiples contextos
+  def multiple_contexts?
+    all_roles.size > 1
+  end
+
+  # Verificar si el usuario tiene acceso a un nodo organizacional
+  def has_node_access?(node_id, tenant_id = nil)
+    query = user_node_scopes.kept
+    query = query.where(tenant_id: tenant_id) if tenant_id.present?
+
+    # Verificar acceso directo
+    return true if query.exists?(organizational_node_id: node_id)
+
+    # Verificar acceso por jerarquía (si tiene acceso a padre con include_children)
+    node = OrganizationalNode.find_by(id: node_id)
+    return false unless node
+
+    query.where(include_children: true).any? do |scope|
+      node.ancestor_of?(scope.organizational_node)
+    end
+  end
+
+  # Verificar si el usuario tiene acceso a un vehículo
+  def has_vehicle_access?(vehicle_id, tenant_id = nil)
+    query = user_vehicle_scopes.kept.active
+    query = query.where(tenant_id: tenant_id) if tenant_id.present?
+
+    query.exists?(vehicle_id: vehicle_id)
+  end
+
+  # Obtener todos los nodos accesibles para el usuario en un tenant
+  def accessible_nodes(tenant_id)
+    node_scopes = user_node_scopes
+                    .kept
+                    .where(tenant_id: tenant_id)
+                    .includes(:organizational_node)
+
+    accessible_node_ids = []
+
+    node_scopes.each do |scope|
+      if scope.include_children?
+        # Incluir el nodo y todos sus descendientes
+        accessible_node_ids << scope.organizational_node_id
+        accessible_node_ids += scope.organizational_node.descendants.pluck(:id)
+      else
+        # Solo el nodo específico
+        accessible_node_ids << scope.organizational_node_id
+      end
+    end
+
+    OrganizationalNode.where(id: accessible_node_ids.uniq)
+  end
+
+  # Obtener todos los vehículos accesibles para el usuario en un tenant
+  def accessible_vehicles(tenant_id)
+    vehicle_ids = user_vehicle_scopes
+                    .kept
+                    .active
+                    .where(tenant_id: tenant_id)
+                    .pluck(:vehicle_id)
+
+    Vehicle.where(id: vehicle_ids)
+  end
+
+  # Estadísticas de scopes del usuario en un tenant
+  def scopes_stats(tenant_id)
+    {
+      node_scopes: user_node_scopes.kept.where(tenant_id: tenant_id).count,
+      vehicle_scopes: user_vehicle_scopes.kept.where(tenant_id: tenant_id).count,
+      active_vehicle_scopes: user_vehicle_scopes.kept.active.where(tenant_id: tenant_id).count,
+      expired_vehicle_scopes: user_vehicle_scopes.kept.expired.where(tenant_id: tenant_id).count
+    }
+  end
+
+  # Verificar si puede gestionar usuarios en un tenant
+  def can_manage_users_in_tenant?(tenant_id)
+    super_admin? || tenant_admin?(tenant_id)
+  end
+
+  # Verificar si puede gestionar scopes en un tenant
+  def can_manage_scopes_in_tenant?(tenant_id)
+    super_admin? || tenant_admin_or_manager?(tenant_id)
+  end
+
+  # Verificar si puede ver información de un tenant
+  def can_view_tenant?(tenant_id)
+    super_admin? || has_tenant_access?(tenant_id)
+  end
+
+  # Verificar si puede modificar un tenant
+  def can_modify_tenant?(tenant_id)
+    super_admin? || tenant_admin?(tenant_id)
+  end
+
+  # Información completa del contexto actual del usuario
+  def context_info(tenant_id = nil)
+    info = {
+      user_id: id,
+      email: email,
+      full_name: full_name,
+      is_platform_admin: platform_admin?,
+      is_super_admin: super_admin?,
+      is_support_admin: support_admin?
+    }
+
+    if tenant_id.present?
+      membership = tenant_memberships
+                    .active
+                    .kept
+                    .includes(:role)
+                    .find_by(tenant_id: tenant_id)
+
+      if membership
+        info[:tenant_context] = {
+          tenant_id: tenant_id,
+          role_slug: membership.role&.slug || membership.role,
+          role_name: membership.role&.name || membership.role.titleize,
+          is_primary_admin: membership.is_primary_admin?,
+          is_default: membership.is_default?
+        }
+      end
+    end
+
+    info
+  end
+
+  # Resumen de accesos del usuario
+  def access_summary
+    {
+      platform_access: platform_admin?,
+      tenant_count: tenant_memberships.active.kept.count,
+      roles: all_roles,
+      default_tenant: default_tenant&.name
+    }
+  end
+
+
+  # ============================================
+  # CLASS METHODS
+  # ============================================
+
+  class << self
+    def find_by_email(email)
+      find_by("LOWER(email) = ?", email.downcase)
+    end
+
+    def stats
+      {
+        total: count,
+        verified: verified.count,
+        unverified: unverified.count,
+        pending_invitations: pending_invitation.count,
+        locked: where.not(locked_at: nil).count,
+        deleted: discarded.count
+      }
+    end
+  end
+
+  private
+
+  # ============================================
+  # PRIVATE METHODS
+  # ============================================
+
+  def normalize_email
+    self.email = email.downcase.strip if email.present?
+  end
+
+  def password_required?
+    !persisted? || !password.nil? || !password_confirmation.nil?
+  end
+end
+
+# app/models/vehicle.rb
+# Vehículo de la flota
+
+class Vehicle < ApplicationRecord
+  # ============================================
+  # CONCERNS
+  # ============================================
+  include Auditable
+  include SoftDeletable
+  include Tenantable
+
+  # ============================================
+  # ENUMS
+  # ============================================
+  STATUSES = %w[active inactive maintenance].freeze
+  VEHICLE_TYPES = %w[car truck van motorcycle bus trailer].freeze
+  FUEL_TYPES = %w[gasoline diesel electric hybrid].freeze
+
+  # ============================================
+  # ASSOCIATIONS
+  # ============================================
+  belongs_to :tenant
+  belongs_to :organizational_node, optional: true
+  belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
+
+  has_many :user_vehicle_scopes, dependent: :destroy
+  has_many :scoped_users, through: :user_vehicle_scopes, source: :user
+
+  # ============================================
+  # VALIDATIONS
+  # ============================================
+  validates :name, presence: true, length: { maximum: 255 }
+  validates :license_plate, presence: true,
+            uniqueness: { scope: :tenant_id, conditions: -> { where(deleted_at: nil) } }
+  validates :fleet_number, uniqueness: { scope: :tenant_id, allow_nil: true }
+  validates :status, inclusion: { in: STATUSES }
+  validates :vehicle_type, inclusion: { in: VEHICLE_TYPES }, allow_nil: true
+  validates :fuel_type, inclusion: { in: FUEL_TYPES }, allow_nil: true
+
+  # ============================================
+  # CALLBACKS
+  # ============================================
+  before_validation :normalize_license_plate
+
+  # ============================================
+  # SCOPES
+  # ============================================
+  scope :active, -> { where(status: "active") }
+  scope :inactive, -> { where(status: "inactive") }
+  scope :in_maintenance, -> { where(status: "maintenance") }
+  scope :by_type, ->(type) { where(vehicle_type: type) }
+  scope :by_node, ->(node_id) { where(organizational_node_id: node_id) }
+  scope :by_name, -> { order(:name) }
+  scope :expiring_registration, ->(days = 30) {
+    where("registration_expires_at BETWEEN ? AND ?", Date.current, days.days.from_now)
+  }
+  scope :expiring_insurance, ->(days = 30) {
+    where("insurance_expires_at BETWEEN ? AND ?", Date.current, days.days.from_now)
+  }
+
+  # ============================================
+  # INSTANCE METHODS
+  # ============================================
+
+  # Estado del vehículo
+  def active?
+    status == "active"
+  end
+
+  def in_maintenance?
+    status == "maintenance"
+  end
+
+  # Expiración de documentos
+  def registration_expired?
+    registration_expires_at.present? && registration_expires_at < Date.current
+  end
+
+  def insurance_expired?
+    insurance_expires_at.present? && insurance_expires_at < Date.current
+  end
+
+  def registration_expires_soon?(days = 30)
+    return false unless registration_expires_at.present?
+    registration_expires_at.between?(Date.current, days.days.from_now)
+  end
+
+  def insurance_expires_soon?(days = 30)
+    return false unless insurance_expires_at.present?
+    insurance_expires_at.between?(Date.current, days.days.from_now)
+  end
+
+  # Mantenimiento
+  def requires_maintenance?
+    last_maintenance_date.blank? || last_maintenance_date < 6.months.ago
+  end
+
+  # Acceso
+  def accessible_by?(user)
+    return true if user.platform_admin?
+    return true if user.tenant_admin?(tenant_id)
+
+    user_vehicle_scopes.exists?(user_id: user.id)
+  end
+
+  # Ubicación organizacional
+  def organization_path
+    return "Unassigned" unless organizational_node
+    organizational_node.full_path
+  end
+
+  # Display
+  def display_name
+    "#{name} (#{license_plate})"
+  end
+
+  def to_s
+    display_name
+  end
+
+  private
+
+  def normalize_license_plate
+    self.license_plate = license_plate&.upcase&.strip
   end
 end

@@ -1,5 +1,6 @@
 # db/seeds/06_vehicles.rb
 # Vehículos con datos enriquecidos y variedad de estados
+# CORREGIDO: Safe nil handling en estadísticas
 
 puts "\n🚗 Creating Vehicles..."
 
@@ -10,7 +11,7 @@ tenants_with_vehicles = [
 ].compact
 
 # ============================================
-# DATOS DE VEHÍCULOS EXTENDIDO
+# DATOS DE VEHÍCULOS
 # ============================================
 
 VEHICLE_CATALOG = {
@@ -34,7 +35,7 @@ VEHICLE_CATALOG = {
       'Iveco' => [ 'Stralis 450', 'Stralis 380', 'Daily' ],
       'Scania' => [ 'R450', 'R490', 'G450' ]
     },
-    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    fuel_types: [ 'diesel' ],
     passenger_capacity: 2,
     base_price: 80000
   },
@@ -46,7 +47,7 @@ VEHICLE_CATALOG = {
       'Peugeot' => [ 'Boxer 330', 'Boxer 435', 'Expert' ],
       'Citroën' => [ 'Jumper 330', 'Jumper 435', 'Berlingo' ]
     },
-    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    fuel_types: [ 'diesel', 'electric' ],
     passenger_capacity: 3,
     base_price: 35000
   },
@@ -57,18 +58,18 @@ VEHICLE_CATALOG = {
       'Honda' => [ 'PCX', 'SH' ],
       'Piaggio' => [ 'MP3 300', 'Beverly' ]
     },
-    fuel_types: [ 'gasoline', 'diesel', 'hybrid', 'electric' ],
+    fuel_types: [ 'gasoline' ],
     passenger_capacity: 2,
     base_price: 8000
   }
-}
+}.freeze
 
 COLORS = [
   'White', 'Black', 'Silver', 'Blue', 'Red', 'Gray',
   'Green', 'Orange', 'Yellow', 'Purple', 'Brown', 'Beige'
 ].freeze
 
-STATUSES = [ 'active', 'inactive', 'maintenance' ].freeze
+STATUSES = %w[active inactive maintenance].freeze
 
 FUEL_CONSUMPTION = {
   car: { gasoline: 7.5, diesel: 6.5, hybrid: 5.0, electric: 0.0 },
@@ -84,11 +85,11 @@ MAINTENANCE_TYPES = [
 ].freeze
 
 # ============================================
-# HELPER PARA GENERAR DATOS REALISTAS
+# HELPERS
 # ============================================
 
 def random_license_plate
-  region_code = %w[B M V A Z C].sample # Código de provincia ES
+  region_code = %w[B M V A Z C].sample
   numbers = rand(1000..9999)
   letters = ('A'..'Z').to_a.sample(3).join
   "#{numbers}#{region_code}#{letters}"
@@ -106,7 +107,6 @@ tenants_with_vehicles.each do |tenant|
   puts "\n  Creating vehicles for: #{tenant.name}"
 
   ActsAsTenant.with_tenant(tenant) do
-    # Obtener nodos que permiten vehículos
     nodes_with_vehicles = OrganizationalNode.joins(:level)
       .where(organizational_node_levels: { allows_vehicles: true })
       .to_a
@@ -114,37 +114,29 @@ tenants_with_vehicles.each do |tenant|
     next if nodes_with_vehicles.empty?
 
     vehicle_count = case tenant.slug
-    when 'tech-startup'
-      10  # Flota pequeña pero variada
-    when 'global-logistics'
-      40  # Flota mediana
-    when 'enterprise-mega'
-      80  # Flota grande con variedad
-    else
-      15
+    when 'tech-startup' then 10
+    when 'global-logistics' then 40
+    when 'enterprise-mega' then 80
+    else 15
     end
 
-    # ESTADÍSTICAS PARA TRACKING
     vehicles_created = 0
     vehicles_by_type = {}
-    maintenance_scheduled = 0
 
     vehicle_count.times do |i|
-      # Determinar tipo de vehículo (con pesos probabilísticos)
-      case tenant.slug
+      vehicle_type = case tenant.slug
       when 'tech-startup'
-        vehicle_type = [ :car, :van ].sample
+        [ :car, :van ].sample
       when 'global-logistics'
         weights = { truck: 0.4, van: 0.4, car: 0.15, motorcycle: 0.05 }
-        vehicle_type = weights.max_by { |_k, w| rand ** (1.0 / w) }[0]
+        weights.max_by { |_k, w| rand ** (1.0 / w) }[0]
       when 'enterprise-mega'
         weights = { truck: 0.35, van: 0.35, car: 0.25, motorcycle: 0.05 }
-        vehicle_type = weights.max_by { |_k, w| rand ** (1.0 / w) }[0]
+        weights.max_by { |_k, w| rand ** (1.0 / w) }[0]
       end
 
       vehicles_by_type[vehicle_type] = (vehicles_by_type[vehicle_type] || 0) + 1
 
-      # Datos específicos del vehículo
       vehicle_info = VEHICLE_CATALOG[vehicle_type]
       make = vehicle_info[:makes].keys.sample
       model = vehicle_info[:makes][make].sample
@@ -152,14 +144,10 @@ tenants_with_vehicles.each do |tenant|
       color = COLORS.sample
       status = STATUSES.sample
       year = rand(2016..2024)
-      month = rand(1..12)
-      day = rand(1..28)
 
-      # Datos realistas
-      purchase_date = Date.new(year, month, day)
+      purchase_date = Date.new(year, rand(1..12), rand(1..28))
       registration_date = purchase_date + rand(1..30).days
 
-      # Calculatekilometraje realista
       months_in_service = ((Date.current - purchase_date).to_i / 30.0).round
       annual_km = case vehicle_type
       when :truck then rand(80000..120000)
@@ -169,15 +157,12 @@ tenants_with_vehicles.each do |tenant|
       end
 
       odometer = (months_in_service * annual_km / 12.0).to_i + rand(0..5000)
-
       license_plate = random_license_plate
       fleet_number = "#{tenant.slug[0..2].upcase}-#{vehicle_type.to_s[0..1].upcase}#{(i + 1).to_s.rjust(4, '0')}"
 
-      # Datos de expiración
       registration_expiry = registration_date + 4.years
       insurance_expiry = Date.current + rand(30..360).days
 
-      # Algunos registros próximos a expirar
       if i % 12 == 0
         registration_expiry = 20.days.from_now
       end
@@ -185,21 +170,15 @@ tenants_with_vehicles.each do |tenant|
         insurance_expiry = 10.days.from_now
       end
 
-      # Última revisión
       last_maintenance_days = case status
-      when 'maintenance'
-        rand(8..12).months.ago
-      when 'active'
-        rand(1..6).months.ago
-      else
-        rand(6..24).months.ago
+      when 'maintenance' then rand(8..12).months.ago
+      when 'active' then rand(1..6).months.ago
+      else rand(6..24).months.ago
       end
 
-      # Nodo de asignación
       node = nodes_with_vehicles.sample
 
-      # Crear vehículo
-      vehicle = Vehicle.create_with(
+      Vehicle.create_with(
         name: "#{make} #{model} (#{license_plate})",
         vehicle_type: vehicle_type.to_s,
         make: make,
@@ -268,25 +247,11 @@ tenants_with_vehicles.each do |tenant|
       vehicles_created += 1
     end
 
-    # ESTADÍSTICAS DEL TENANT
     puts "    ✓ Created #{vehicles_created} vehicles"
-    puts "      Vehicle types: #{vehicles_by_type.map { |k, v| "#{k}: #{v}" }.join(', ')}"
+    puts "      Types: #{vehicles_by_type.map { |k, v| "#{k}: #{v}" }.join(', ')}"
 
-    # Contar por estado
     by_status = Vehicle.group(:status).count
     puts "      Status: #{by_status.map { |k, v| "#{k}: #{v}" }.join(', ')}"
-
-    # Vehículos con mantenimiento próximo
-    needs_maintenance = Vehicle.where('last_maintenance_date < ?', 6.months.ago).count
-    puts "      Need maintenance: #{needs_maintenance}"
-
-    # Registros expirando
-    expiring_registration = Vehicle.where('registration_expires_at BETWEEN ? AND ?',
-                                         Date.current, 30.days.from_now).count
-    expiring_insurance = Vehicle.where('insurance_expires_at BETWEEN ? AND ?',
-                                       Date.current, 30.days.from_now).count
-    puts "      Expiring soon: #{expiring_registration} registrations, #{expiring_insurance} insurance"
-    puts "      Maintenance records created: #{maintenance_scheduled}"
   end
 end
 
@@ -300,50 +265,53 @@ ActsAsTenant.without_tenant do
   total_vehicles = Vehicle.unscoped.count
 
   puts "    - Total Vehicles: #{total_vehicles}"
-  puts "    - Total Maintenance Records: #{total_maintenance}"
 
-  puts "\n    - Vehicle Distribution by Type:"
-  Vehicle.unscoped.group(:vehicle_type).count.each do |type, count|
-    percentage = ((count.to_f / total_vehicles) * 100).round(1)
-    puts "      - #{type.to_s.capitalize}: #{count} (#{percentage}%)"
+  if total_vehicles > 0
+    puts "\n    - Vehicle Distribution by Type:"
+    Vehicle.unscoped.group(:vehicle_type).count.each do |type, count|
+      percentage = ((count.to_f / total_vehicles) * 100).round(1)
+      puts "      - #{type.to_s.capitalize}: #{count} (#{percentage}%)"
+    end
+
+    puts "\n    - Status Distribution:"
+    Vehicle.unscoped.group(:status).count.each do |status, count|
+      percentage = ((count.to_f / total_vehicles) * 100).round(1)
+      puts "      - #{status.capitalize}: #{count} (#{percentage}%)"
+    end
+
+    puts "\n    - Fuel Type Distribution:"
+    Vehicle.unscoped.group(:fuel_type).count.each do |fuel, count|
+      percentage = ((count.to_f / total_vehicles) * 100).round(1)
+      puts "      - #{fuel.capitalize}: #{count} (#{percentage}%)"
+    end
+
+    puts "\n    - Fleet Age Analysis:"
+    avg_year = Vehicle.unscoped.average(:year)
+    avg_year = avg_year.round if avg_year.present?
+    oldest = Vehicle.unscoped.minimum(:year)
+    newest = Vehicle.unscoped.maximum(:year)
+    puts "      - Average year: #{avg_year || 'N/A'}"
+    puts "      - Range: #{oldest || 'N/A'} - #{newest || 'N/A'}"
+
+    puts "\n    - Mileage Summary:"
+    avg_odometer = Vehicle.unscoped.average(:odometer)
+    avg_odometer = avg_odometer.round if avg_odometer.present?
+    max_odometer = Vehicle.unscoped.maximum(:odometer)
+    min_odometer = Vehicle.unscoped.minimum(:odometer)
+    puts "      - Average: #{avg_odometer || 'N/A'} km"
+    puts "      - Range: #{min_odometer || 'N/A'} - #{max_odometer || 'N/A'} km"
+
+    puts "\n    - Maintenance Status:"
+    needs_service = Vehicle.unscoped.where('last_maintenance_date < ?', 6.months.ago).count
+    puts "      - Needs service (>6 months): #{needs_service}"
+
+    expiring_reg = Vehicle.unscoped.where('registration_expires_at BETWEEN ? AND ?',
+                                          Date.current, 30.days.from_now).count
+    expiring_ins = Vehicle.unscoped.where('insurance_expires_at BETWEEN ? AND ?',
+                                          Date.current, 30.days.from_now).count
+    puts "      - Registration expiring (30 days): #{expiring_reg}"
+    puts "      - Insurance expiring (30 days): #{expiring_ins}"
   end
-
-  puts "\n    - Status Distribution:"
-  Vehicle.unscoped.group(:status).count.each do |status, count|
-    percentage = ((count.to_f / total_vehicles) * 100).round(1)
-    puts "      - #{status.capitalize}: #{count} (#{percentage}%)"
-  end
-
-  puts "\n    - Fuel Type Distribution:"
-  Vehicle.unscoped.group(:fuel_type).count.each do |fuel, count|
-    percentage = ((count.to_f / total_vehicles) * 100).round(1)
-    puts "      - #{fuel.capitalize}: #{count} (#{percentage}%)"
-  end
-
-  puts "\n    - Fleet Age Analysis:"
-  avg_year = Vehicle.unscoped.average(:year).round
-  oldest = Vehicle.unscoped.minimum(:year)
-  newest = Vehicle.unscoped.maximum(:year)
-  puts "      - Average year: #{avg_year}"
-  puts "      - Range: #{oldest} - #{newest}"
-
-  puts "\n    - Mileage Summary:"
-  avg_odometer = Vehicle.unscoped.average(:odometer).round
-  max_odometer = Vehicle.unscoped.maximum(:odometer)
-  min_odometer = Vehicle.unscoped.minimum(:odometer)
-  puts "      - Average: #{avg_odometer} km"
-  puts "      - Range: #{min_odometer} - #{max_odometer} km"
-
-  puts "\n    - Maintenance Status:"
-  needs_service = Vehicle.unscoped.where('last_maintenance_date < ?', 6.months.ago).count
-  puts "      - Needs service (>6 months): #{needs_service}"
-
-  expiring_reg = Vehicle.unscoped.where('registration_expires_at BETWEEN ? AND ?',
-                                        Date.current, 30.days.from_now).count
-  expiring_ins = Vehicle.unscoped.where('insurance_expires_at BETWEEN ? AND ?',
-                                        Date.current, 30.days.from_now).count
-  puts "      - Registration expiring (30 days): #{expiring_reg}"
-  puts "      - Insurance expiring (30 days): #{expiring_ins}"
 end
 
 puts "\n  🚗 Sample Vehicles by Tenant:"
