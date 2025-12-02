@@ -28,7 +28,7 @@ module V1
               end
             end
 
-            # Encontrar usuario objetivo
+            # Encontrar usuario objetivo (si se proporcionó)
             def find_user(user_id, tenant)
               user = User.find_by(id: user_id)
               api_error(message: "User not found", status: 404) unless user
@@ -40,12 +40,12 @@ module V1
               user
             end
 
-            # Autorizar acceso a scopes
+            # Autorizar acceso a scopes (solo cuando target_user presente)
             def authorize_scope_access!(target_user, tenant)
               return if current_user.platform_admin?
               return if current_user.tenant_admin?(tenant.id)
-              return if current_user.id == target_user.id
-              # Managers: implementar jerarquía si existe
+              return if target_user && current_user.id == target_user.id
+              # Managers: implementar jerarquía si existe (aquí puedes expandir la lógica)
               api_error(message: "Not authorized to view this user's scopes", status: 403)
             end
 
@@ -72,9 +72,13 @@ module V1
               nodes
             end
 
-            # Construir árbol con información de selección
+            # Construir árbol con información de selección (soporta user = nil)
             def build_selection_tree(nodes, user, tenant)
-              cache_key = "tenant:#{tenant.id}:user:#{user.id}:selection_tree:#{selection_cache_key_suffix}"
+              # Construir cache key de forma segura aunque user sea nil
+              user_part = user&.id || "none"
+              cache_key = "tenant:#{tenant.id}:user:#{user_part}:selection_tree:#{selection_cache_key_suffix}"
+
+              # Si no queremos cache, delegar directamente
               if params[:no_cache]
                 OrganizationalNodesScopeQuery.new(nodes, user: user).selection_tree
               else
@@ -99,17 +103,15 @@ module V1
           # ============================================
           # GET /selection_tree - ÁRBOL PARA ASIGNACIÓN DE SCOPES
           # ============================================
-          # Este es el endpoint PRINCIPAL para mostrar el árbol con información
-          # de selección de un usuario. El frontend usa esto para:
-          # 1. Mostrar qué nodos tiene asignados el usuario
-          # 2. Permitir seleccionar/deseleccionar nodos
-          # 3. Mostrar badges de "Heredado", "Parcial", etc.
+          # Endpoint principal para mostrar el árbol con información
+          # de selección de un usuario o, si no se pasa usuario,
+          # para mostrar el árbol completo sin selecciones.
           desc "Get organizational tree with user scope information",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
           params do
             optional :tenant_id, type: Integer
-            requires :user_id, type: Integer
+            optional :user_id, type: Integer         # <-- ahora opcional
             optional :status, type: String, values: OrganizationalNode::STATUSES
             optional :level_id, type: Integer
             optional :only_vehicle_nodes, type: Boolean, default: false
@@ -120,8 +122,14 @@ module V1
           get :selection_tree do
             authenticate!
             target_tenant = resolve_target_tenant(params[:tenant_id])
-            target_user = find_user(params[:user_id], target_tenant)
-            authorize_scope_access!(target_user, target_tenant)
+
+            # Si user_id está presente, buscar y autorizar; si no, trabajamos en modo "creación"
+            target_user = nil
+            if params[:user_id].present?
+              target_user = find_user(params[:user_id], target_tenant)
+              # autorizar sólo si existe target_user
+              authorize_scope_access!(target_user, target_tenant)
+            end
 
             nodes = ActsAsTenant.with_tenant(target_tenant) do
               policy_scope(
@@ -142,8 +150,6 @@ module V1
           # ============================================
           # GET /users/:user_id/scopes - OBTENER SCOPES DE UN USUARIO
           # ============================================
-          # Endpoint más simple que solo retorna los scopes sin el árbol completo
-          # Útil para mostrar resumen o para validaciones
           desc "Get user's current organizational scopes",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
@@ -196,8 +202,6 @@ module V1
           # ============================================
           # PUT /users/:user_id/scopes - ACTUALIZAR SCOPES
           # ============================================
-          # Este es el endpoint que recibe la selección del frontend
-          # y la guarda optimizada en la base de datos
           desc "Update user's organizational scopes",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
@@ -230,7 +234,6 @@ module V1
           # ============================================
           # DELETE /users/:user_id/scopes - LIMPIAR SCOPES
           # ============================================
-          # Elimina todos los scopes de un usuario
           desc "Clear all user's organizational scopes",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
@@ -261,8 +264,6 @@ module V1
           # ============================================
           # GET /dropdown_options - OPCIONES PARA DROPDOWN
           # ============================================
-          # Retorna lista plana de opciones para usar en <select>
-          # Útil para formularios simples sin árbol
           desc "Get dropdown options for organizational nodes",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
@@ -297,8 +298,6 @@ module V1
           # ============================================
           # POST /users/:user_id/scopes/validate_access - VALIDAR ACCESO
           # ============================================
-          # Valida si un usuario tiene acceso a un nodo específico
-          # Útil para validaciones desde otros servicios
           desc "Validate if user has access to specific node",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
@@ -328,7 +327,6 @@ module V1
           # ============================================
           # POST /users/bulk_update_scopes - ACTUALIZACIÓN MASIVA
           # ============================================
-          # Actualizar scopes de múltiples usuarios a la vez
           desc "Bulk update scopes for multiple users",
                tags: [ "Tenant - User Scopes" ],
                success: { code: 200 }
