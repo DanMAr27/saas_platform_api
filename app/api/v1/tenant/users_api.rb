@@ -88,9 +88,9 @@ module V1
               tenant_memberships: :role
             )
 
-            # ✅ IMPORTANTE: Usar V1::Entities::TenantUserListEntity
+            # ✅ IMPORTANTE: Usar Entities::TenantUserListEntity
             success_response(
-              data: V1::Entities::TenantUserListEntity.represent(
+              data: Entities::TenantUserListEntity.represent(
                 users_with_data,
                 tenant_id: target_tenant.id
               ),
@@ -151,7 +151,7 @@ module V1
 
             # ✅ Responder con el USER, no con membership
             success_response(
-              data: V1::Entities::TenantUserDetailEntity.represent(
+              data: Entities::TenantUserDetailEntity.represent(
                 user_with_data,
                 include_scopes: params[:include_scopes],
                 tenant_id: target_tenant.id

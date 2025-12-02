@@ -20,8 +20,10 @@ module V1
     # ENDPOINTS DE TENANT (contexto tenant)
     # ============================================
     mount V1::Tenant::ProfileApi
-    mount V1::Tenant::OrganizationalNodesApi
+    # mount V1::Tenant::OrganizationalNodesApi
     mount V1::Tenant::OrganizationalLevelsApi
+    mount V1::Tenant::OrganizationalNodesTreeApi
+    mount V1::Tenant::OrganizationalNodesScopeApi
     mount V1::Tenant::VehiclesApi
     mount V1::Tenant::ScopesApi
     mount V1::Tenant::UsersApi

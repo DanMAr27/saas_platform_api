@@ -114,12 +114,20 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.boolean "requires_scope", default: false, null: false
     t.boolean "is_system", default: false, null: false
     t.integer "priority", default: 0, null: false
+    t.boolean "allows_node_scope", default: false, null: false
+    t.boolean "allows_vehicle_scope", default: false, null: false
+    t.boolean "requires_any_scope", default: false, null: false
     t.jsonb "settings", default: {}
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.index ["allows_node_scope"], name: "index_roles_on_allows_node_scope"
+    t.index ["allows_vehicle_scope"], name: "index_roles_on_allows_vehicle_scope"
+    t.index ["context", "allows_node_scope"], name: "index_roles_on_context_and_node_scope"
+    t.index ["context", "allows_vehicle_scope"], name: "index_roles_on_context_and_vehicle_scope"
     t.index ["context"], name: "index_roles_on_context"
     t.index ["is_system"], name: "index_roles_on_is_system"
     t.index ["priority"], name: "index_roles_on_priority"
+    t.index ["requires_any_scope"], name: "index_roles_on_requires_any_scope"
     t.index ["settings"], name: "index_roles_on_settings", using: :gin
     t.index ["slug"], name: "index_roles_on_slug", unique: true
   end
@@ -127,7 +135,7 @@ ActiveRecord::Schema[8.0].define(version: 14) do
   create_table "tenant_memberships", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.bigint "tenant_id", null: false
-    t.string "role", limit: 50, default: "driver", null: false
+    t.bigint "role_id", null: false
     t.boolean "is_primary_admin", default: false, null: false
     t.string "status", limit: 20, default: "invited", null: false
     t.string "invitation_token", limit: 64
@@ -139,14 +147,13 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.bigint "deleted_by"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.bigint "role_id"
     t.index ["deleted_at"], name: "index_tenant_memberships_on_deleted_at"
     t.index ["invitation_token"], name: "index_tenant_memberships_on_invitation_token", unique: true, where: "(invitation_token IS NOT NULL)"
     t.index ["role_id"], name: "index_tenant_memberships_on_role_id"
     t.index ["status"], name: "index_tenant_memberships_on_status"
     t.index ["tenant_id", "is_primary_admin"], name: "index_tenant_memberships_on_tenant_primary_admin", unique: true, where: "((is_primary_admin = true) AND (deleted_at IS NULL))"
     t.index ["tenant_id"], name: "index_tenant_memberships_on_tenant_id"
-    t.index ["user_id", "tenant_id", "role"], name: "index_tenant_memberships_on_user_tenant_role", unique: true, where: "(deleted_at IS NULL)"
+    t.index ["user_id", "tenant_id", "role_id"], name: "index_tenant_memberships_on_user_tenant_role", unique: true, where: "(deleted_at IS NULL)"
     t.index ["user_id"], name: "index_tenant_memberships_on_user_id"
   end
 
