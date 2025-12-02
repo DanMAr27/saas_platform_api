@@ -283,7 +283,7 @@ class OrganizationalNodesTreeQuery
   # ============================================
 
   def calculate_max_depth
-    @relation.maximum(:depth) || 0
+    @relation.map(&:depth).max || 0
   end
 
   def nodes_by_level_stats
