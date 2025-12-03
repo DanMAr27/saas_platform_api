@@ -64,12 +64,15 @@ module V1
             tenant = ::Tenant.find(params[:id])
             authorize!(tenant, :show?, policy_class: TenantPolicy)
 
-            present tenant,
-                    with: Entities::TenantEntity,
-                    type: :detailed,
-                    show_limits: true,
-                    show_subscription: true,
-                    show_timestamps: true
+            success_response(
+              data: Entities::TenantEntity.represent(
+                tenant,
+                type: :detailed,
+                show_limits: true,
+                show_subscription: true,
+                show_timestamps: true
+              )
+            )
           end
 
           # ============================================
