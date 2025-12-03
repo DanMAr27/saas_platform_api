@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+# app/services/platform/tenants/create_service.rb
 
 module Platform
   module Tenants
@@ -17,54 +17,66 @@ module Platform
       end
 
       def call
-        validation_result = validate_params
-        return validation_result if validation_result.failure?
+        validation = validate_params
+        return validation if validation.failure?
 
-        ActiveRecord::Base.transaction do
-          tenant = create_tenant
-          return failure(errors: tenant.errors.full_messages) unless tenant.persisted?
+        begin
+          tenant = nil
+          admin_user = nil
+          membership = nil
 
-          admin_user = find_or_create_admin_user
-          return admin_user if admin_user.failure?
+          ActiveRecord::Base.transaction do
+            tenant = create_tenant!
+            admin_user = create_admin_user!
+            membership = create_admin_membership!(tenant, admin_user)
 
-          membership = create_admin_membership(tenant, admin_user.data)
-          return membership if membership.failure?
-
-          set_paper_trail_context(admin_user.data)
+            set_paper_trail_context(admin_user)
+          end
 
           success(
             data: {
               tenant: tenant,
-              admin: admin_user.data,
-              membership: membership.data
+              admin: admin_user,
+              membership: membership
             },
             message: "Tenant created successfully"
           )
+
+        rescue ActiveRecord::RecordInvalid => e
+          failure(errors: e.record.errors.full_messages)
+        rescue StandardError => e
+          Rails.logger.error("[CreateTenantService] Error: #{e.message}")
+          Rails.logger.error(e.backtrace.join("\n"))
+          failure(errors: "Failed to create tenant: #{e.message}")
         end
-      rescue ActiveRecord::RecordInvalid => e
-        failure(errors: e.record.errors.full_messages)
-      rescue StandardError => e
-        Rails.logger.error("[CreateTenantService] Error: #{e.message}")
-        Rails.logger.error(e.backtrace.join("\n"))
-        failure(errors: "Failed to create tenant")
       end
 
       private
 
+      # --------------------------------------------------
+      # VALIDACIONES
+      # --------------------------------------------------
       def validate_params
-        required_fields = %i[name admin_email admin_first_name admin_last_name]
-        missing_fields = required_fields.select { |f| params[f].blank? }
-        return failure(errors: "Missing required fields: #{missing_fields.join(', ')}") if missing_fields.any?
+        required = %i[name admin_email admin_first_name admin_last_name]
+        missing = required.select { |f| params[f].blank? }
 
-        return failure(errors: "Invalid admin email format") unless params[:admin_email] =~ URI::MailTo::EMAIL_REGEXP
+        return failure(errors: "Missing required fields: #{missing.join(', ')}") if missing.any?
+
+        unless params[:admin_email] =~ URI::MailTo::EMAIL_REGEXP
+          return failure(errors: "Invalid admin email format")
+        end
+
         if params[:admin_password].present? && params[:admin_password].length < 8
           return failure(errors: "Admin password must be at least 8 characters")
         end
 
-        success(data: { valid: true })
+        success(data: true)
       end
 
-      def create_tenant
+      # --------------------------------------------------
+      # CREACIÓN DE TENANT
+      # --------------------------------------------------
+      def create_tenant!
         tenant_params = {
           name: params[:name],
           slug: params[:slug],
@@ -82,35 +94,43 @@ module Platform
           status: params[:status] || "trial",
           plan: params[:plan] || "trial",
           created_by: current_user&.id
-        }
+        }.compact
 
-        Tenant.create!(tenant_params.compact)
+        Tenant.create!(tenant_params)
       end
 
-      def find_or_create_admin_user
+      # --------------------------------------------------
+      # CREACIÓN DEL ADMIN USER
+      # --------------------------------------------------
+      def create_admin_user!
         existing_user = User.find_by(email: params[:admin_email])
+
         if existing_user
-          return failure(errors: "Admin user account is deactivated") if existing_user.deleted?
-          return success(data: existing_user)
+          raise ActiveRecord::RecordInvalid.new(existing_user),
+                "Admin user account is deactivated" if existing_user.deleted?
+
+          return existing_user
         end
+
+        generated_pass = params[:admin_password].presence || generate_random_password
 
         user_params = {
           email: params[:admin_email],
           first_name: params[:admin_first_name],
           last_name: params[:admin_last_name],
           phone: params[:admin_phone],
-          password: params[:admin_password] || generate_random_password,
-          password_confirmation: params[:admin_password] || generate_random_password,
+          password: generated_pass,
+          password_confirmation: generated_pass,
           email_verified_at: Time.current
         }
 
-        user = User.create!(user_params)
-        success(data: user)
-      rescue ActiveRecord::RecordInvalid => e
-        failure(errors: e.record.errors.full_messages)
+        User.create!(user_params)
       end
 
-      def create_admin_membership(tenant, admin_user)
+      # --------------------------------------------------
+      # CREACIÓN MEMBERSHIP
+      # --------------------------------------------------
+      def create_admin_membership!(tenant, admin_user)
         admin_role = Role.find_by!(slug: "tenant_admin")
 
         membership_params = {
@@ -123,12 +143,12 @@ module Platform
           created_by: current_user&.id
         }
 
-        membership = TenantMembership.create!(membership_params)
-        success(data: membership)
-      rescue ActiveRecord::RecordInvalid => e
-        failure(errors: e.record.errors.full_messages)
+        TenantMembership.create!(membership_params)
       end
 
+      # --------------------------------------------------
+      # HELPERS
+      # --------------------------------------------------
       def generate_random_password
         SecureRandom.urlsafe_base64(12)
       end

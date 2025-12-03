@@ -1,6 +1,6 @@
 # app/services/tenants/users/create_service.rb
 # Servicio para crear usuarios en un tenant con rol y scopes
-# ACTUALIZADO: Con validación de compatibilidad rol-scope usando Scopeable
+# ACTUALIZADO: Con ScopeCompatibilityValidator integrado
 
 module Tenants
   module Users
@@ -24,52 +24,58 @@ module Tenants
         validation_result = validate_params
         return validation_result if validation_result.failure?
 
-        # 2. 🆕 NUEVO: Validar compatibilidad rol-scope
-        compatibility_result = validate_role_scope_compatibility
+        # 2. 🆕 NUEVO: Validar compatibilidad rol-scope (CRÍTICO)
+        compatibility_result = validate_scope_compatibility
         return compatibility_result if compatibility_result.failure?
 
-        # 3. Validar límite de usuarios
+        # 3. 🆕 NUEVO: Validar que los recursos existan en el tenant
+        resources_result = validate_resources_exist
+        return resources_result if resources_result.failure?
+
+        # 4. Validar límite de usuarios
         if tenant.user_limit_reached?
           return failure(errors: "User limit reached for this tenant")
         end
 
         ActiveRecord::Base.transaction do
-          # 4. Crear o encontrar usuario
+          # 5. Crear o encontrar usuario
           user_result = find_or_create_user
           return user_result if user_result.failure?
           user = user_result.data
 
-          # 5. Verificar que no tenga membresía activa con este rol
+          # 6. Verificar que no tenga membresía activa con este rol
           if user.tenant_memberships.exists?(
             tenant_id: tenant.id,
-            role_id: @role.id,  # Usar el rol ya cargado
+            role_id: @role.id,
             status: "active"
           )
             return failure(errors: "User already has this role in this tenant")
           end
 
-          # 6. 🔄 CAMBIO CRÍTICO: Asignar scopes ANTES de crear membership
-          if @role.requires_any_scope?
+          # 7. 🔄 CRÍTICO: Asignar scopes ANTES de crear membership
+          if @role.requires_any_scope? || params[:node_scopes].present? || params[:vehicle_scopes].present?
             scopes_result = assign_scopes(user)
             return scopes_result if scopes_result.failure?
           end
 
-          # 7. Crear membresía (ahora los scopes ya existen)
+          # 8. Crear membresía (DESPUÉS de scopes)
           membership_result = create_membership(user)
           return membership_result if membership_result.failure?
           membership = membership_result.data
 
-          # 8. Configurar PaperTrail
-          set_paper_trail_context
+          # 9. Configurar PaperTrail
+          set_paper_trail_context(user, membership)
 
-          # 9. TODO: Enviar email de bienvenida/invitación
+          # 10. TODO: Enviar email de bienvenida/invitación
+          # enqueue_welcome_email(user) unless params[:skip_email]
 
           success(
             data: {
               user: user,
               membership: membership,
               node_scopes: user.user_node_scopes.where(tenant_id: tenant.id),
-              vehicle_scopes: user.user_vehicle_scopes.where(tenant_id: tenant.id)
+              vehicle_scopes: user.user_vehicle_scopes.where(tenant_id: tenant.id),
+              warnings: @scope_warnings # 🆕 Incluir warnings de validación
             },
             message: params[:password].present? ?
               "User created successfully" :
@@ -83,6 +89,10 @@ module Tenants
       end
 
       private
+
+      # ============================================
+      # VALIDACIONES
+      # ============================================
 
       def validate_params
         required = %i[email first_name last_name role_slug]
@@ -105,74 +115,146 @@ module Tenants
         success(data: { valid: true })
       end
 
-      # 🆕 NUEVO: Validar compatibilidad entre rol y scopes proporcionados
-      def validate_role_scope_compatibility
-        # Usar el método del concern Scopeable
-        validation = @role.validate_scope_compatibility(
+      # 🆕 NUEVO: Validar compatibilidad entre rol y scopes usando el validador
+      def validate_scope_compatibility
+        validator = ScopeCompatibilityValidator.new(
+          role: @role,
           node_scopes: params[:node_scopes],
           vehicle_scopes: params[:vehicle_scopes]
         )
 
-        unless validation[:valid]
-          return failure(errors: validation[:errors])
+        result = validator.validate
+
+        # Guardar warnings para incluirlos en la respuesta final
+        @scope_warnings = result[:warnings]
+
+        unless result[:valid]
+          Rails.logger.warn("[CreateUserService] Scope compatibility validation failed")
+          Rails.logger.warn("[CreateUserService] Role: #{@role.slug}")
+          Rails.logger.warn("[CreateUserService] Errors: #{result[:errors].join(', ')}")
+
+          return failure(
+            errors: result[:errors],
+            meta: {
+              validation_summary: result[:summary],
+              detailed_explanation: validator.detailed_explanation
+            }
+          )
         end
 
-        # Validación adicional: Si proporciona node scopes, verificar que existan
+        # Log de warnings si existen
+        if result[:warnings].any?
+          Rails.logger.info("[CreateUserService] Scope compatibility warnings:")
+          result[:warnings].each { |w| Rails.logger.info("[CreateUserService]   - #{w}") }
+        end
+
+        success(data: { compatible: true, warnings: result[:warnings] })
+      end
+
+      # 🆕 NUEVO: Validar que los nodos y vehículos existan en el tenant
+      def validate_resources_exist
+        errors = []
+
+        # Validar nodos organizacionales
         if params[:node_scopes].present?
-          node_ids = params[:node_scopes].map { |ns| ns[:organizational_node_id] }.compact
-          existing_nodes = OrganizationalNode.where(
-            id: node_ids,
-            tenant_id: tenant.id
-          ).pluck(:id)
+          node_validation = validate_organizational_nodes
+          errors.concat(node_validation) if node_validation.any?
+        end
 
-          missing_nodes = node_ids - existing_nodes
-          if missing_nodes.any?
-            return failure(errors: "Nodes not found in this tenant: #{missing_nodes.join(', ')}")
-          end
+        # Validar vehículos
+        if params[:vehicle_scopes].present?
+          vehicle_validation = validate_vehicles
+          errors.concat(vehicle_validation) if vehicle_validation.any?
+        end
 
-          # Validar que los nodos permitan asignación de usuarios
-          invalid_nodes = OrganizationalNode.where(id: node_ids)
+        return failure(errors: errors) if errors.any?
+
+        success(data: { resources_valid: true })
+      end
+
+      def validate_organizational_nodes
+        errors = []
+        node_ids = params[:node_scopes].map { |ns| ns[:organizational_node_id] }.compact.uniq
+
+        # Verificar que existan en el tenant
+        existing_nodes = OrganizationalNode.where(
+          id: node_ids,
+          tenant_id: tenant.id,
+          status: "active"
+        ).pluck(:id)
+
+        missing_nodes = node_ids - existing_nodes
+        if missing_nodes.any?
+          errors << "Organizational nodes not found in this tenant: #{missing_nodes.join(', ')}"
+        end
+
+        # Verificar que los nodos permitan asignación de usuarios
+        if existing_nodes.any?
+          invalid_nodes = OrganizationalNode.where(id: existing_nodes)
             .joins(:level)
             .where(organizational_node_levels: { allows_users: false })
-            .pluck(:id)
+            .pluck(:id, :name)
 
           if invalid_nodes.any?
-            return failure(
-              errors: "These nodes do not allow user assignment: #{invalid_nodes.join(', ')}"
-            )
+            node_names = invalid_nodes.map { |id, name| "#{name} (ID: #{id})" }.join(", ")
+            errors << "These organizational nodes do not allow user assignment: #{node_names}"
           end
         end
 
-        # Validación adicional: Si proporciona vehicle scopes, verificar que existan
-        if params[:vehicle_scopes].present?
-          vehicle_ids = params[:vehicle_scopes].map { |vs| vs[:vehicle_id] }.compact
-          existing_vehicles = Vehicle.where(
-            id: vehicle_ids,
-            tenant_id: tenant.id
-          ).pluck(:id)
+        errors
+      end
 
-          missing_vehicles = vehicle_ids - existing_vehicles
-          if missing_vehicles.any?
-            return failure(
-              errors: "Vehicles not found in this tenant: #{missing_vehicles.join(', ')}"
-            )
-          end
+      def validate_vehicles
+        errors = []
+        vehicle_ids = params[:vehicle_scopes].map { |vs| vs[:vehicle_id] }.compact.uniq
 
-          # Validar que los vehículos estén en nodos que permitan vehículos
-          invalid_vehicles = Vehicle.where(id: vehicle_ids)
+        # Verificar que existan en el tenant
+        existing_vehicles = Vehicle.where(
+          id: vehicle_ids,
+          tenant_id: tenant.id
+        ).pluck(:id)
+
+        missing_vehicles = vehicle_ids - existing_vehicles
+        if missing_vehicles.any?
+          errors << "Vehicles not found in this tenant: #{missing_vehicles.join(', ')}"
+        end
+
+        # Verificar que los vehículos estén en nodos que permitan vehículos
+        if existing_vehicles.any?
+          invalid_vehicles = Vehicle.where(id: existing_vehicles)
             .joins(organizational_node: :level)
             .where(organizational_node_levels: { allows_vehicles: false })
-            .pluck(:id)
+            .pluck(:id, :plate_number)
 
           if invalid_vehicles.any?
-            return failure(
-              errors: "These vehicles are in nodes that don't allow vehicles: #{invalid_vehicles.join(', ')}"
-            )
+            vehicle_plates = invalid_vehicles.map { |id, plate| "#{plate} (ID: #{id})" }.join(", ")
+            errors << "These vehicles are in nodes that don't allow vehicle assignment: #{vehicle_plates}"
           end
         end
 
-        success(data: { compatible: true })
+        # Validar fechas de validez si se proporcionan
+        params[:vehicle_scopes].each do |vs|
+          if vs[:valid_from].present? && vs[:valid_until].present?
+            valid_from = parse_datetime(vs[:valid_from])
+            valid_until = parse_datetime(vs[:valid_until])
+
+            if valid_from && valid_until && valid_from >= valid_until
+              errors << "Vehicle #{vs[:vehicle_id]}: valid_from must be before valid_until"
+            end
+          end
+        end
+
+        errors
       end
+
+      def parse_datetime(value)
+        return value if value.is_a?(DateTime) || value.is_a?(Time)
+        DateTime.parse(value.to_s) rescue nil
+      end
+
+      # ============================================
+      # CREACIÓN DE USUARIO
+      # ============================================
 
       def find_or_create_user
         email = params[:email].downcase.strip
@@ -211,47 +293,72 @@ module Tenants
         failure(errors: e.record.errors.full_messages)
       end
 
-      # 🔄 MOVIDO ANTES de create_membership
+      # ============================================
+      # ASIGNACIÓN DE SCOPES
+      # ============================================
+
       def assign_scopes(user)
         # Asignar node scopes
         if params[:node_scopes].present?
-          params[:node_scopes].each do |node_scope_params|
-            node = OrganizationalNode.find(node_scope_params[:organizational_node_id])
-
-            UserNodeScope.create!(
-              user: user,
-              organizational_node: node,
-              tenant: tenant,
-              access_type: node_scope_params[:access_type] || "read",
-              include_children: node_scope_params.fetch(:include_children, true),
-              created_by: current_user.id
-            )
-          end
+          node_result = assign_node_scopes(user)
+          return node_result if node_result.failure?
         end
 
         # Asignar vehicle scopes
         if params[:vehicle_scopes].present?
-          params[:vehicle_scopes].each do |vehicle_scope_params|
-            vehicle = Vehicle.find(vehicle_scope_params[:vehicle_id])
-
-            UserVehicleScope.create!(
-              user: user,
-              vehicle: vehicle,
-              tenant: tenant,
-              access_type: vehicle_scope_params[:access_type] || "read",
-              valid_from: vehicle_scope_params[:valid_from],
-              valid_until: vehicle_scope_params[:valid_until],
-              created_by: current_user.id
-            )
-          end
+          vehicle_result = assign_vehicle_scopes(user)
+          return vehicle_result if vehicle_result.failure?
         end
 
         success(data: { assigned: true })
+      end
+
+      def assign_node_scopes(user)
+        params[:node_scopes].each do |node_scope_params|
+          node = OrganizationalNode.find(node_scope_params[:organizational_node_id])
+
+          UserNodeScope.create!(
+            user: user,
+            organizational_node: node,
+            tenant: tenant,
+            access_type: node_scope_params[:access_type] || "read",
+            include_children: node_scope_params.fetch(:include_children, true),
+            created_by: current_user.id
+          )
+        end
+
+        success(data: { node_scopes_created: params[:node_scopes].size })
       rescue ActiveRecord::RecordInvalid => e
         failure(errors: e.record.errors.full_messages)
       rescue ActiveRecord::RecordNotFound => e
-        failure(errors: "Resource not found: #{e.message}")
+        failure(errors: "Organizational node not found: #{e.message}")
       end
+
+      def assign_vehicle_scopes(user)
+        params[:vehicle_scopes].each do |vehicle_scope_params|
+          vehicle = Vehicle.find(vehicle_scope_params[:vehicle_id])
+
+          UserVehicleScope.create!(
+            user: user,
+            vehicle: vehicle,
+            tenant: tenant,
+            access_type: vehicle_scope_params[:access_type] || "read",
+            valid_from: vehicle_scope_params[:valid_from],
+            valid_until: vehicle_scope_params[:valid_until],
+            created_by: current_user.id
+          )
+        end
+
+        success(data: { vehicle_scopes_created: params[:vehicle_scopes].size })
+      rescue ActiveRecord::RecordInvalid => e
+        failure(errors: e.record.errors.full_messages)
+      rescue ActiveRecord::RecordNotFound => e
+        failure(errors: "Vehicle not found: #{e.message}")
+      end
+
+      # ============================================
+      # CREACIÓN DE MEMBERSHIP
+      # ============================================
 
       def create_membership(user)
         membership_params = {
@@ -270,21 +377,28 @@ module Tenants
         failure(errors: e.record.errors.full_messages)
       end
 
+      # ============================================
+      # HELPERS
+      # ============================================
+
       def generate_temporary_password
         SecureRandom.urlsafe_base64(16)
       end
 
-      def set_paper_trail_context
+      def set_paper_trail_context(user, membership)
         PaperTrail.request.whodunnit = current_user.id
         PaperTrail.request.controller_info = {
           metadata: {
             tenant_id: tenant.id,
             performed_action: "create_user",
             role_assigned: @role.name,
+            role_slug: @role.slug,
             scopes_assigned: {
               nodes: params[:node_scopes]&.size || 0,
               vehicles: params[:vehicle_scopes]&.size || 0
-            }
+            },
+            scope_warnings: @scope_warnings&.any? ? @scope_warnings : nil,
+            user_status: membership.status
           }
         }
       end
