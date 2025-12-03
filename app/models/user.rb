@@ -245,7 +245,7 @@ class User < ApplicationRecord
   # Verificar si el usuario tiene acceso a un tenant específico
   def has_tenant_access?(tenant_id)
     tenant_memberships
-      .active
+      .where(state: [ "active", "invited" ])
       .kept
       .exists?(tenant_id: tenant_id)
   end

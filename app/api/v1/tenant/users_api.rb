@@ -205,7 +205,7 @@ module V1
               status 201
               success_response(
                 data: Entities::TenantUserDetailEntity.represent(
-                  result.data[:membership],
+                  result.data[:user],
                   include_scopes: true,
                   tenant_id: target_tenant.id
                 ),
