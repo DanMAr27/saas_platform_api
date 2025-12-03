@@ -142,7 +142,20 @@ module V1
 
         # Construir el árbol con información de selección del usuario
         query = OrganizationalNodesScopeQuery.new(all_nodes, user: user)
-        tree_data = query.selection_tree
+        tree_result = query.selection_tree
+
+        # ============================================
+        # MANEJAR EL RESULTADO DEL QUERY
+        # ============================================
+        # Si selection_tree devuelve un hash con :tree y :metadata
+        if tree_result.is_a?(Hash)
+          tree_data = tree_result[:tree] || tree_result["tree"] || []
+          metadata = tree_result[:metadata] || tree_result["metadata"] || {}
+        else
+          # Si devuelve directamente el array del árbol
+          tree_data = tree_result
+          metadata = {}
+        end
 
         # ============================================
         # METADATA DE SCOPES
@@ -151,6 +164,8 @@ module V1
                           .where(user_id: user.id, tenant_id: tenant_id)
                           .kept
 
+        stored_count = stored_scopes.count
+
         # ============================================
         # VEHÍCULOS
         # ============================================
@@ -158,6 +173,9 @@ module V1
                           .where(user_id: user.id, tenant_id: tenant_id)
                           .kept
                           .includes(:vehicle)
+
+        active_vehicles_count = vehicle_scopes.select(&:active?).count
+        total_vehicles_count = vehicle_scopes.count
 
         vehicles = vehicle_scopes.map do |scope|
           {
@@ -175,26 +193,37 @@ module V1
         end
 
         # ============================================
+        # EXTRAER METADATA DE FORMA SEGURA
+        # ============================================
+        total_coverage = metadata[:total_coverage] || metadata["total_coverage"] || 0
+        optimization_ratio = metadata[:optimization_ratio] || metadata["optimization_ratio"] || {}
+        saved_records = if optimization_ratio.is_a?(Hash)
+                          optimization_ratio[:saved_records] || optimization_ratio["saved_records"] || 0
+        else
+                          0
+        end
+
+        # ============================================
         # RESPUESTA FINAL
         # ============================================
         {
           # Árbol completo jerárquico con estados de selección
-          nodes_tree: V1::Entities::OrganizationalNodeSelectionEntity.represent(tree_data[:tree]),
+          nodes_tree: V1::Entities::OrganizationalNodeSelectionEntity.represent(tree_data),
 
           # Metadata del árbol (IDs guardados, efectivos, optimización)
-          nodes_metadata: V1::Entities::OrganizationalNodeSelectionEntity::SelectionTreeMetadataEntity.represent(tree_data[:metadata]),
+          nodes_metadata: V1::Entities::OrganizationalNodeSelectionEntity::SelectionTreeMetadataEntity.represent(metadata),
 
           # Vehículos asignados
           vehicles: vehicles,
 
           # Resumen general
           summary: {
-            total_stored_nodes: stored_scopes.count,
-            total_effective_nodes: tree_data[:metadata][:total_coverage],
-            total_vehicles: vehicle_scopes.count,
-            active_vehicles: vehicle_scopes.count(&:active?),
-            expired_vehicles: vehicle_scopes.reject(&:active?).count,
-            optimization_saved: tree_data[:metadata][:optimization_ratio][:saved_records]
+            total_stored_nodes: stored_count,
+            total_effective_nodes: total_coverage,
+            total_vehicles: total_vehicles_count,
+            active_vehicles: active_vehicles_count,
+            expired_vehicles: total_vehicles_count - active_vehicles_count,
+            optimization_saved: saved_records
           }
         }
       end
