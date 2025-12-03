@@ -122,61 +122,79 @@ module V1
       end
 
       # ============================================
-      # SCOPES (NODOS Y VEHÍCULOS)
+      # SCOPES (NODOS Y VEHÍCULOS) - SIEMPRE COMPLETO
       # ============================================
       expose :scopes,
-             if: ->(user, options) { options[:include_scopes] },
              documentation: {
                type: "Object",
-               desc: "Access scopes (nodes and vehicles)"
+               desc: "Complete access scopes with full tree visualization"
              } do |user, options|
         tenant_id = options[:tenant_id]
 
-        # Obtener todos los scopes del usuario en este tenant
-        node_scopes = UserNodeScope
-                        .where(user_id: user.id, tenant_id: tenant_id)
-                        .kept
-                        .includes(:organizational_node)
+        # ============================================
+        # NODES - ÁRBOL COMPLETO CON SELECCIÓN
+        # ============================================
+        # Obtener todos los nodos activos del tenant
+        all_nodes = OrganizationalNode
+                      .where(tenant_id: tenant_id)
+                      .active
+                      .includes(:level, :children, :ancestors)
 
+        # Construir el árbol con información de selección del usuario
+        query = OrganizationalNodesScopeQuery.new(all_nodes, user: user)
+        tree_data = query.selection_tree
+
+        # ============================================
+        # METADATA DE SCOPES
+        # ============================================
+        stored_scopes = UserNodeScope
+                          .where(user_id: user.id, tenant_id: tenant_id)
+                          .kept
+
+        # ============================================
+        # VEHÍCULOS
+        # ============================================
         vehicle_scopes = UserVehicleScope
                           .where(user_id: user.id, tenant_id: tenant_id)
                           .kept
                           .includes(:vehicle)
 
+        vehicles = vehicle_scopes.map do |scope|
+          {
+            id: scope.id,
+            vehicle_id: scope.vehicle_id,
+            vehicle_name: scope.vehicle.name,
+            license_plate: scope.vehicle.license_plate,
+            vehicle_code: scope.vehicle.fleet_number,
+            access_type: scope.access_type,
+            valid_from: scope.valid_from&.iso8601,
+            valid_until: scope.valid_until&.iso8601,
+            is_active: scope.active?,
+            created_at: scope.created_at&.iso8601
+          }
+        end
+
+        # ============================================
+        # RESPUESTA FINAL
+        # ============================================
         {
-          nodes: node_scopes.map do |scope|
-            {
-              id: scope.id,
-              node_id: scope.organizational_node_id,
-              node_name: scope.organizational_node.name,
-              node_code: scope.organizational_node.code,
-              node_path: scope.organizational_node.full_path,
-              access_type: scope.access_type,
-              include_children: scope.include_children,
-              created_at: scope.created_at&.iso8601
-            }
-          end,
+          # Árbol completo jerárquico con estados de selección
+          nodes_tree: V1::Entities::OrganizationalNodeSelectionEntity.represent(tree_data[:tree]),
 
-          vehicles: vehicle_scopes.map do |scope|
-            {
-              id: scope.id,
-              vehicle_id: scope.vehicle_id,
-              vehicle_name: scope.vehicle.name,
-              license_plate: scope.vehicle.license_plate,
-              vehicle_code: scope.vehicle.fleet_number,
-              access_type: scope.access_type,
-              valid_from: scope.valid_from&.iso8601,
-              valid_until: scope.valid_until&.iso8601,
-              is_active: scope.active?,
-              created_at: scope.created_at&.iso8601
-            }
-          end,
+          # Metadata del árbol (IDs guardados, efectivos, optimización)
+          nodes_metadata: V1::Entities::OrganizationalNodeSelectionEntity::SelectionTreeMetadataEntity.represent(tree_data[:metadata]),
 
+          # Vehículos asignados
+          vehicles: vehicles,
+
+          # Resumen general
           summary: {
-            total_nodes: node_scopes.count,
+            total_stored_nodes: stored_scopes.count,
+            total_effective_nodes: tree_data[:metadata][:total_coverage],
             total_vehicles: vehicle_scopes.count,
             active_vehicles: vehicle_scopes.count(&:active?),
-            expired_vehicles: vehicle_scopes.reject(&:active?).count
+            expired_vehicles: vehicle_scopes.reject(&:active?).count,
+            optimization_saved: tree_data[:metadata][:optimization_ratio][:saved_records]
           }
         }
       end
