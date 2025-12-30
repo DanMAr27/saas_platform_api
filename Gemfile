@@ -4,7 +4,7 @@ source "https://rubygems.org"
 
 # Core Rails
 gem "rails", "~> 8.0.3"
-gem "pg", "~> 1.5" # PostgreSQL adapter
+gem "pg", "~> 1.6" # PostgreSQL adapter
 
 # Servidor de aplicación
 gem "puma", ">= 5.0"
