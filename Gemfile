@@ -19,7 +19,7 @@ gem "bootsnap", require: false
 # AUTENTICACIÓN Y AUTORIZACIÓN
 # ============================================
 gem "devise", "~> 4.9" # Autenticación de usuarios
-gem "devise-jwt", "~> 0.12" # JWT para APIs con Devise
+gem "devise-jwt", "~> 0.13" # JWT para APIs con Devise
 gem "pundit", "~> 2.4" # Autorización basada en políticas
 
 # ============================================
