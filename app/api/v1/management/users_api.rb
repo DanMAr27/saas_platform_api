@@ -1,19 +1,19 @@
-# app/api/v1/tenant/users_api.rb
+# app/api/v1/management/users_api.rb
 
 module V1
-  module Tenant
+  module Management
     class UsersApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         namespace :users do
           # ============================================
           # LISTAR USUARIOS DEL TENANT
           # ============================================
           desc "List users in current tenant",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
@@ -26,24 +26,23 @@ module V1
           get do
             authenticate!
 
-            # Determinar tenant
-            target_tenant = if current_user.platform_admin?
+            authenticate!
+
+            # Verificar acceso al tenant
+            if current_user.platform_admin?
               unless params[:tenant_id]
                 api_error(message: "Platform admins must provide tenant_id", status: 400)
               end
-              ::Tenant.find(params[:tenant_id])
+              target_tenant = ::Tenant.find(params[:tenant_id])
+              ActsAsTenant.current_tenant = target_tenant
             else
               require_tenant!
               verify_tenant_access!
-              current_tenant
+              target_tenant = current_tenant
             end
 
-            # Autorizar
-            unless current_user.platform_admin? ||
-                  current_user.tenant_admin?(target_tenant.id) ||
-                  current_user.tenant_manager?(target_tenant.id)
-              api_error(message: "Admin or Manager role required", status: 403)
-            end
+            # Autorizar acción de listar usuarios usando policy
+            authorize!(target_tenant, :index?, policy_class: ::Management::UserPolicy)
 
             # ✅ PARTIR DE USERS, NO DE MEMBERSHIPS
             users_query = ::User.kept
@@ -107,7 +106,7 @@ module V1
           # VER USUARIO
           # ============================================
           desc "Get user details",
-              tags: [ "Tenant - Users" ],
+              tags: [ "Management - Users" ],
               success: { code: 200 }
           params do
             requires :id, type: Integer, desc: "User ID"
@@ -129,13 +128,8 @@ module V1
             # Encontrar usuario
             user = ::User.kept.find(params[:id])
 
-            # Verificar autorización
-            unless current_user.platform_admin? ||
-                  current_user.id == user.id ||
-                  current_user.tenant_admin?(target_tenant.id) ||
-                  current_user.tenant_manager?(target_tenant.id)
-              api_error(message: "Access denied", status: 403)
-            end
+            # Verificar autorización usando policy
+            authorize!(user, :show?, policy_class: ::Management::UserPolicy)
 
             # Verificar que el usuario tenga acceso al tenant
             unless user.has_tenant_access?(target_tenant.id)
@@ -163,7 +157,7 @@ module V1
           # CREAR USUARIO
           # ============================================
           desc "Create user with role and scopes",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 201 }
           params do
             optional :tenant_id, type: Integer
@@ -183,17 +177,18 @@ module V1
               unless params[:tenant_id]
                 api_error(message: "Platform admins must provide tenant_id", status: 400)
               end
-              ::Tenant.find(params[:tenant_id])
+              t = ::Tenant.find(params[:tenant_id])
+              ActsAsTenant.current_tenant = t
+              t
             else
               require_tenant!
               verify_tenant_access!
               current_tenant
             end
 
-            unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id)
-              api_error(message: "Admin role required", status: 403)
-            end
+            # Autorizar creación usando policy
+            temp_user = ::User.new
+            authorize!(temp_user, :create?, policy_class: ::Management::UserPolicy)
 
             result = ::Tenants::Users::CreateService.call(
               params: declared(params).except(:tenant_id),
@@ -224,7 +219,7 @@ module V1
           # ACTUALIZAR USUARIO (datos personales)
           # ============================================
           desc "Update user personal information",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
@@ -248,12 +243,8 @@ module V1
             user = User.find(params[:id])
 
             # Solo el propio usuario, admins o managers pueden actualizar
-            unless current_user.platform_admin? ||
-                   current_user.id == user.id ||
-                   current_user.tenant_admin?(target_tenant.id) ||
-                   current_user.tenant_manager?(target_tenant.id)
-              api_error(message: "Access denied", status: 403)
-            end
+            # Autorizar actualización usando policy
+            authorize!(user, :update?, policy_class: ::Management::UserPolicy)
 
             result = ::Tenants::Users::UpdateService.call(
               user: user,
@@ -284,7 +275,7 @@ module V1
           # ELIMINAR USUARIO DEL TENANT
           # ============================================
           desc "Remove user from tenant",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
@@ -301,12 +292,10 @@ module V1
               current_tenant
             end
 
-            unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id)
-              api_error(message: "Admin role required", status: 403)
-            end
-
+            # Autorizar eliminación (quitar del tenant)
+            # Nota: destroy? en la policy debe manejar la lógica de no borrar a uno mismo ni al primary admin
             user = User.find(params[:id])
+            authorize!(user, :destroy?, policy_class: ::Management::UserPolicy)
             membership = user.tenant_memberships.find_by(tenant_id: target_tenant.id)
 
             unless membership
@@ -336,7 +325,7 @@ module V1
           # CAMBIAR ROL DE USUARIO
           # ============================================
           desc "Change user role in tenant",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
@@ -354,12 +343,9 @@ module V1
               current_tenant
             end
 
-            unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id)
-              api_error(message: "Admin role required", status: 403)
-            end
-
+            # Autorizar cambio de rol
             user = User.find(params[:id])
+            authorize!(user, :change_role?, policy_class: ::Management::UserPolicy)
             membership = user.tenant_memberships.find_by(tenant_id: target_tenant.id)
 
             unless membership
@@ -394,7 +380,7 @@ module V1
           # ACTUALIZAR SCOPES DE USUARIO
           # ============================================
           desc "Update user scopes (nodes and vehicles)",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
@@ -410,6 +396,7 @@ module V1
               optional :valid_from, type: DateTime
               optional :valid_until, type: DateTime
             end
+            optional :role_slug, type: String, desc: "Role slug to scope updates to"
           end
           put ":id/scopes" do
             authenticate!
@@ -422,13 +409,9 @@ module V1
               current_tenant
             end
 
-            unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id) ||
-                   current_user.tenant_manager?(target_tenant.id)
-              api_error(message: "Admin or Manager role required", status: 403)
-            end
-
+            # Autorizar cambio de scopes
             user = User.find(params[:id])
+            authorize!(user, :manage_scopes?, policy_class: ::Management::UserPolicy)
 
             unless user.has_tenant_access?(target_tenant.id)
               api_error(message: "User not found in this tenant", status: 404)
@@ -464,7 +447,7 @@ module V1
           # AÑADIR ROL ADICIONAL A USUARIO
           # ============================================
           desc "Add additional role to user in tenant (multi-role support)",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 201 }
           params do
             requires :id, type: Integer
@@ -484,12 +467,9 @@ module V1
               current_tenant
             end
 
-            unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id)
-              api_error(message: "Admin role required", status: 403)
-            end
-
+            # Autorizar añadir rol
             user = User.find(params[:id])
+            authorize!(user, :change_role?, policy_class: ::Management::UserPolicy)
 
             unless user.has_tenant_access?(target_tenant.id)
               api_error(message: "User not found in this tenant", status: 404)
@@ -527,7 +507,7 @@ module V1
           # ELIMINAR ROL ESPECÍFICO DE USUARIO
           # ============================================
           desc "Remove specific role from user in tenant",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
@@ -545,12 +525,9 @@ module V1
               current_tenant
             end
 
-            unless current_user.platform_admin? ||
-                   current_user.tenant_admin?(target_tenant.id)
-              api_error(message: "Admin role required", status: 403)
-            end
-
+            # Autorizar eliminar rol
             user = User.find(params[:id])
+            authorize!(user, :change_role?, policy_class: ::Management::UserPolicy)
             role = Role.find_by!(slug: params[:role_slug])
 
             membership = user.tenant_memberships.find_by(
@@ -585,7 +562,7 @@ module V1
           # LISTAR TODOS LOS ROLES DEL USUARIO
           # ============================================
           desc "List all roles for user in tenant",
-                tags: [ "Tenant - Users" ],
+                tags: [ "Management - Users" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer

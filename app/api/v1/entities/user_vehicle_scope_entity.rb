@@ -9,6 +9,7 @@ module V1
       expose :user_id, documentation: { type: "Integer" }
       expose :vehicle_id, documentation: { type: "Integer" }
       expose :access_type, documentation: { type: "String" }
+      expose :role_id, documentation: { type: "Integer" }
       expose :valid_from, format_with: :iso_timestamp
       expose :valid_until, format_with: :iso_timestamp
 
@@ -37,6 +38,15 @@ module V1
       # Usuario (opcional)
       expose :user, using: UserEntity,
              if: ->(scope, opts) { opts[:include_user] }
+
+      # Rol (opcional)
+      expose :role, if: ->(scope, opts) { scope.role_id.present? } do |scope|
+        {
+          id: scope.role.id,
+          name: scope.role.name,
+          slug: scope.role.slug
+        }
+      end
 
       # Timestamps
       with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do

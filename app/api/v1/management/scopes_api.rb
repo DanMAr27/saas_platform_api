@@ -1,19 +1,19 @@
-# app/api/v1/tenant/scopes_api.rb
+# app/api/v1/management/scopes_api.rb
 
 module V1
-  module Tenant
+  module Management
     class ScopesApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         namespace :scopes do
           # ============================================
           # ASIGNAR SCOPE DE NODO
           # ============================================
           desc "Assign node scope to user",
-                tags: [ "Tenant - Scopes" ]
+                tags: [ "Management - Scopes" ]
           params do
             optional :tenant_id, type: Integer
             requires :user_id, type: Integer
@@ -65,7 +65,7 @@ module V1
           # ASIGNAR SCOPE DE VEHÍCULO
           # ============================================
           desc "Assign vehicle scope to user",
-                tags: [ "Tenant - Scopes" ]
+                tags: [ "Management - Scopes" ]
           params do
             optional :tenant_id, type: Integer
             requires :user_id, type: Integer
@@ -118,7 +118,7 @@ module V1
           # REVOCAR SCOPE
           # ============================================
           desc "Revoke scope",
-                tags: [ "Tenant - Scopes" ]
+                tags: [ "Management - Scopes" ]
           params do
             requires :type, type: String, values: %w[node vehicle]
             requires :id, type: Integer

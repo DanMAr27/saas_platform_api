@@ -321,6 +321,7 @@ module Tenants
             user: user,
             organizational_node: node,
             tenant: tenant,
+            role: @role,
             access_type: node_scope_params[:access_type] || "read",
             include_children: node_scope_params.fetch(:include_children, true),
             created_by: current_user.id
@@ -342,6 +343,7 @@ module Tenants
             user: user,
             vehicle: vehicle,
             tenant: tenant,
+            role: @role,
             access_type: vehicle_scope_params[:access_type] || "read",
             valid_from: vehicle_scope_params[:valid_from],
             valid_until: vehicle_scope_params[:valid_until],

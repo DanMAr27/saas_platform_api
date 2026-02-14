@@ -10,6 +10,7 @@ module V1
       expose :organizational_node_id, documentation: { type: "Integer" }
       expose :access_type, documentation: { type: "String" }
       expose :include_children, documentation: { type: "Boolean" }
+      expose :role_id, documentation: { type: "Integer" }
 
       # Información del nodo (si se solicita)
       expose :organizational_node,
@@ -32,6 +33,15 @@ module V1
       # Usuario (opcional)
       expose :user, using: UserEntity,
              if: ->(scope, opts) { opts[:include_user] }
+
+      # Rol (opcional)
+      expose :role, if: ->(scope, opts) { scope.role_id.present? } do |scope|
+        {
+          id: scope.role.id,
+          name: scope.role.name,
+          slug: scope.role.slug
+        }
+      end
 
       # Timestamps
       with_options(if: ->(scope, opts) { opts[:show_timestamps] }) do

@@ -435,6 +435,10 @@ class User < ApplicationRecord
     }
   end
 
+  def has_node_scopes?(tenant_id)
+    user_node_scopes.kept.where(tenant_id: tenant_id).exists?
+  end
+
   # Verificar si puede gestionar usuarios en un tenant
   def can_manage_users_in_tenant?(tenant_id)
     super_admin? || tenant_admin?(tenant_id)

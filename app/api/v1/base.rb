@@ -15,19 +15,32 @@ module V1
     # ENDPOINTS DE PLATAFORMA (SuperAdmin)
     # ============================================
     mount V1::Platform::TenantsApi
+    mount V1::Platform::UsersApi
 
     # ============================================
-    # ENDPOINTS DE TENANT (contexto tenant)
+    # ENDPOINTS DE MANAGEMENT (contexto tenant)
     # ============================================
-    mount V1::Tenant::ProfileApi
-    # mount V1::Tenant::OrganizationalNodesApi
-    mount V1::Tenant::OrganizationalLevelsApi
-    mount V1::Tenant::OrganizationalNodesTreeApi
-    mount V1::Tenant::OrganizationalNodesScopeApi
-    mount V1::Tenant::VehiclesApi
-    mount V1::Tenant::ScopesApi
-    mount V1::Tenant::UsersApi
-    mount V1::Tenant::RolesApi
+    mount V1::Management::ProfileApi
+    mount V1::Management::TenantsApi
+    mount V1::Management::OrganizationalNodesApi
+    mount V1::Management::OrganizationalLevelsApi
+
+    mount V1::Management::SelectorsApi
+    mount V1::Management::UserRefScopesApi
+    mount V1::Management::VehiclesApi
+    mount V1::Management::ScopesApi
+    mount V1::Management::UsersApi
+    mount V1::Management::RolesApi
+
+    # ============================================
+    # ENDPOINTS DE DRIVER (contexto driver)
+    # ============================================
+    mount V1::Driver::ProfileApi
+
+    # ============================================
+    # ENDPOINTS DE WORKSHOP (contexto workshop)
+    # ============================================
+    mount V1::Workshop::ProfileApi
 
 
     # Endpoint de health check (siempre disponible, sin autenticación)
@@ -78,27 +91,106 @@ module V1
       mount_path: "/swagger_doc",
       # Configuración de modelos y arrays
       array_use_braces: true,
-      # Tags para agrupar endpoints
+      # Tags para agrupar endpoints por portal
       tags: [
+        # ============================================
+        # AUTHENTICATION (Sin Contexto)
+        # ============================================
         {
-          name: "Authentication",
-          description: "Login, logout, and token management"
+          name: "Authentication - Login",
+          description: "Login de usuarios y selección de contexto"
         },
         {
-          name: "Platform",
-          description: "Platform administration (SuperAdmin only)"
+          name: "Authentication - Tokens",
+          description: "Gestión de tokens JWT (refresh, validate, logout)"
         },
         {
-          name: "Tenant",
-          description: "Tenant-scoped operations"
+          name: "Authentication - User Info",
+          description: "Información del usuario actual y contextos disponibles"
         },
         {
-          name: "Users",
-          description: "User management"
+          name: "Authentication - Context Switch",
+          description: "Cambio de contexto entre tenants"
+        },
+
+        # ============================================
+        # PLATFORM ADMINISTRATION (SuperAdmin)
+        # ============================================
+        {
+          name: "Platform - Tenants",
+          description: "Gestión de tenants (solo SuperAdmin)"
         },
         {
-          name: "Roles",
-          description: "Role assignment and management"
+          name: "Platform - Statistics",
+          description: "Métricas y estadísticas de la plataforma (solo SuperAdmin)"
+        },
+        {
+          name: "Platform - Roles",
+          description: "Vista de roles del sistema (solo lectura, SuperAdmin)"
+        },
+        {
+          name: "Platform - Impersonation",
+          description: "Suplantación de usuarios para soporte (solo Support Admin)"
+        },
+
+        # ============================================
+        # MANAGEMENT (Tenant Admin/Manager)
+        # ============================================
+        {
+          name: "Management - Profile",
+          description: "Perfil del usuario en contexto tenant"
+        },
+        {
+          name: "Management - Users",
+          description: "Gestión de usuarios del tenant"
+        },
+        {
+          name: "Management - Roles",
+          description: "Asignación de roles dentro del tenant"
+        },
+        {
+          name: "Management - Scopes",
+          description: "Gestión de scopes (node/vehicle)"
+        },
+        {
+          name: "Management - Vehicles",
+          description: "Gestión de vehículos del tenant"
+        },
+        {
+          name: "Management - Organizational Levels",
+          description: "Niveles de la estructura organizacional"
+        },
+        {
+          name: "Management - Organizational Nodes",
+          description: "Nodos de la estructura organizacional"
+        },
+        {
+          name: "Management - Organizational Tree",
+          description: "Árbol completo de la organización"
+        },
+        {
+          name: "Management - Selectors",
+          description: "Endpoints ligeros para alimentar componentes UI tipo select/dropdown"
+        },
+        {
+          name: "Management - User Scopes",
+          description: "Gestión de scopes de usuarios específicos"
+        },
+
+        # ============================================
+        # DRIVER (Conductores)
+        # ============================================
+        {
+          name: "Driver - Profile",
+          description: "Perfil y configuración del conductor"
+        },
+
+        # ============================================
+        # WORKSHOP (Talleres)
+        # ============================================
+        {
+          name: "Workshop - Profile",
+          description: "Perfil y configuración del taller"
         }
       ],
       # Formato de respuestas

@@ -1,20 +1,20 @@
 
-# app/api/v1/tenant/vehicles_api.rb
+# app/api/v1/management/vehicles_api.rb
 
 module V1
-  module Tenant
+  module Management
     class VehiclesApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         namespace :vehicles do
           # ============================================
           # LISTAR VEHÍCULOS
           # ============================================
           desc "List vehicles",
-                tags: [ "Tenant - Vehicles" ]
+                tags: [ "Management - Vehicles" ]
           params do
             optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
             optional :status, type: String, values: Vehicle::STATUSES
@@ -79,7 +79,7 @@ module V1
           # VER VEHÍCULO
           # ============================================
           desc "Get vehicle details",
-                tags: [ "Tenant - Vehicles" ]
+                tags: [ "Management - Vehicles" ]
           params do
             requires :id, type: Integer
             optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
@@ -116,7 +116,7 @@ module V1
           # CREAR VEHÍCULO
           # ============================================
           desc "Create vehicle",
-                tags: [ "Tenant - Vehicles" ]
+                tags: [ "Management - Vehicles" ]
           params do
             optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
             requires :name, type: String
@@ -180,7 +180,7 @@ module V1
           # ACTUALIZAR VEHÍCULO
           # ============================================
           desc "Update vehicle",
-                tags: [ "Tenant - Vehicles" ]
+                tags: [ "Management - Vehicles" ]
           params do
             requires :id, type: Integer
             optional :name, type: String
@@ -223,7 +223,7 @@ module V1
           # ELIMINAR VEHÍCULO
           # ============================================
           desc "Delete vehicle",
-                tags: [ "Tenant - Vehicles" ]
+                tags: [ "Management - Vehicles" ]
           params do
             requires :id, type: Integer
           end

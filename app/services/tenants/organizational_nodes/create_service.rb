@@ -47,18 +47,34 @@ module Tenants
 
       def validate_params
         # Validar campos requeridos
-        required_fields = %i[name level_id]
+        required_fields = %i[name]
         missing_fields = required_fields.select { |f| params[f].blank? }
 
         if missing_fields.any?
           return failure(errors: "Missing required fields: #{missing_fields.join(', ')}")
         end
 
-        # Validar nivel
-        level = OrganizationalNodeLevel.find_by(id: params[:level_id], tenant_id: tenant.id)
-        unless level
-          return failure(errors: "Level not found or doesn't belong to tenant")
+        # Inferir nivel basado en jerarquía estricta
+        if params[:parent_id].present?
+          parent = OrganizationalNode.find_by(id: params[:parent_id], tenant_id: tenant.id)
+          unless parent
+            return failure(errors: "Parent node not found")
+          end
+          
+          level = parent.level.next_level
+          unless level
+            return failure(errors: "Parent node's level '#{parent.level.name}' does not allow children (no next level defined)")
+          end
+        else
+          # Si no hay padre, asumimos nivel 1 (Root)
+          level = OrganizationalNodeLevel.where(tenant_id: tenant.id, level_order: 1).first
+          unless level
+            return failure(errors: "Root level (Order 1) not defined for this tenant")
+          end
         end
+        
+        # Asignar el nivel inferido
+        @inferred_level_id = level.id
 
         # Validar padre si se proporciona
         if params[:parent_id]
@@ -131,7 +147,7 @@ module Tenants
       def build_node_params
         {
           tenant: tenant,
-          level_id: params[:level_id],
+          level_id: @inferred_level_id,
           parent_id: params[:parent_id],
           name: params[:name],
           code: params[:code],

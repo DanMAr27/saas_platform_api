@@ -26,7 +26,7 @@ module V1
             # Usar policy_scope para obtener tenants permitidos
             tenants = policy_scope(
               Tenant,
-              policy_scope_class: TenantPolicy::Scope
+              policy_scope_class: ::Platform::TenantPolicy::Scope
             )
 
             # Filtros
@@ -62,7 +62,7 @@ module V1
             require_super_admin!
 
             tenant = ::Tenant.find(params[:id])
-            authorize!(tenant, :show?, policy_class: TenantPolicy)
+            authorize!(tenant, :show?, policy_class: ::Platform::TenantPolicy)
 
             success_response(
               data: Entities::TenantEntity.represent(
@@ -99,7 +99,7 @@ module V1
 
             # Autorizar con un tenant temporal
             temp_tenant = ::Tenant.new
-            authorize!(temp_tenant, :create?, policy_class: TenantPolicy)
+            authorize!(temp_tenant, :create?, policy_class: ::Platform::TenantPolicy)
 
             result = ::Platform::Tenants::CreateService.call(
               params: declared(params),
@@ -144,7 +144,7 @@ module V1
             require_super_admin!
 
             tenant = ::Tenant.find(params[:id])
-            authorize!(tenant, :update?, policy_class: TenantPolicy)
+            authorize!(tenant, :update?, policy_class: ::Platform::TenantPolicy)
 
             if tenant.update(declared(params, include_missing: false).except(:id))
               success_response(
@@ -172,7 +172,7 @@ module V1
             require_super_admin!
 
             tenant = ::Tenant.find(params[:id])
-            authorize!(tenant, :activate?, policy_class: TenantPolicy)
+            authorize!(tenant, :activate?, policy_class: ::Platform::TenantPolicy)
 
             tenant.activate!
 
@@ -195,7 +195,7 @@ module V1
             require_super_admin!
 
             tenant = ::Tenant.find(params[:id])
-            authorize!(tenant, :suspend?, policy_class: TenantPolicy)
+            authorize!(tenant, :suspend?, policy_class: ::Platform::TenantPolicy)
 
             tenant.suspend!(reason: params[:reason])
 

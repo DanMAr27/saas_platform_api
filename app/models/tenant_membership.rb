@@ -212,11 +212,11 @@ class TenantMembership < ApplicationRecord
     return true unless role.requires_any_scope?
 
     if role.allows_node_scope?
-      return user.user_node_scopes.kept.exists?(tenant_id: tenant_id)
+      return user.user_node_scopes.kept.where(tenant_id: tenant_id, role_id: role_id).exists?
     end
 
     if role.allows_vehicle_scope?
-      return user.user_vehicle_scopes.kept.active.exists?(tenant_id: tenant_id)
+      return user.user_vehicle_scopes.kept.active.where(tenant_id: tenant_id, role_id: role_id).exists?
     end
 
     false
@@ -335,10 +335,12 @@ class TenantMembership < ApplicationRecord
     if role.allows_node_scope?
       has_node_scopes = user.user_node_scopes
                             .kept
-                            .exists?(tenant_id: tenant_id)
+                            .where(tenant_id: tenant_id)
+                            .where(role_id: role_id) # Validar linkage específico
+                            .exists?
 
       unless has_node_scopes
-        errors.add(:base, "Role '#{role.name}' requires at least one node scope")
+        errors.add(:base, "Role '#{role.name}' requires at least one node scope assigned to it")
       end
     end
 
@@ -347,10 +349,12 @@ class TenantMembership < ApplicationRecord
       has_vehicle_scopes = user.user_vehicle_scopes
                               .kept
                               .active
-                              .exists?(tenant_id: tenant_id)
+                              .where(tenant_id: tenant_id)
+                              .where(role_id: role_id) # Validar linkage específico
+                              .exists?
 
       unless has_vehicle_scopes
-        errors.add(:base, "Role '#{role.name}' requires at least one vehicle scope")
+        errors.add(:base, "Role '#{role.name}' requires at least one vehicle scope assigned to it")
       end
     end
   end

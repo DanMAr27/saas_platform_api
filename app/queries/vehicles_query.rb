@@ -4,7 +4,7 @@ class VehiclesQuery
   attr_reader :relation, :params, :user
 
   def initialize(relation = Vehicle.all, params: {}, user: nil)
-    @relation = relation.extending(Scopes)
+    @relation = relation
     @params = params
     @user = user
   end
@@ -23,10 +23,7 @@ class VehiclesQuery
     relation = relation.where(vehicle_type: params[:vehicle_type]) if params[:vehicle_type]
     relation = relation.where(organizational_node_id: params[:node_id]) if params[:node_id]
 
-    # Filtrar por scopes del usuario si no es admin
-    if user && !user.platform_admin? && !user.tenant_admin?(relation.first&.tenant_id)
-      relation = relation.accessible_by_user(user)
-    end
+    relation = relation.where(organizational_node_id: params[:node_id]) if params[:node_id]
 
     relation
   end
@@ -51,13 +48,6 @@ class VehiclesQuery
       relation.order(created_at: :desc)
     else
       relation.by_name
-    end
-  end
-
-  module Scopes
-    def accessible_by_user(user)
-      vehicle_ids = UserVehicleScope.active.where(user_id: user.id).pluck(:vehicle_id)
-      where(id: vehicle_ids)
     end
   end
 end

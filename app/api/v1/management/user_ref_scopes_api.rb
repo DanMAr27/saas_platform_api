@@ -1,13 +1,13 @@
-# app/api/v1/tenant/organizational_nodes_scope_api.rb
+# app/api/v1/management/organizational_nodes_scope_api.rb
 
 module V1
-  module Tenant
-    class OrganizationalNodesScopeApi < Grape::API
+  module Management
+    class UserRefScopesApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         namespace :organizational_nodes do
           # ============================================
           # HELPERS LOCALES
@@ -107,7 +107,7 @@ module V1
           # de selección de un usuario o, si no se pasa usuario,
           # para mostrar el árbol completo sin selecciones.
           desc "Get organizational tree with user scope information",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             optional :tenant_id, type: Integer
@@ -151,7 +151,7 @@ module V1
           # GET /users/:user_id/scopes - OBTENER SCOPES DE UN USUARIO
           # ============================================
           desc "Get user's current organizational scopes",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             requires :user_id, type: Integer
@@ -164,25 +164,26 @@ module V1
             target_user = find_user(params[:user_id], target_tenant)
             authorize_scope_access!(target_user, target_tenant)
 
-            stored_scopes = UserNodeScope
-              .where(user_id: target_user.id, tenant_id: target_tenant.id)
-              .includes(organizational_node: [ :level, :ancestors ])
-            stored_ids = stored_scopes.pluck(:organizational_node_id)
+              stored_scopes = UserNodeScope
+                .where(user_id: target_user.id, tenant_id: target_tenant.id)
+                .includes(:role, organizational_node: [ :level, :ancestors ])
+              stored_ids = stored_scopes.pluck(:organizational_node_id)
 
-            response_data = {
-              user_id: target_user.id,
-              user_email: target_user.email,
-              tenant_id: target_tenant.id,
-              stored_scopes: stored_scopes.map do |scope|
-                {
-                  id: scope.organizational_node_id,
-                  name: scope.organizational_node.name,
-                  full_path: scope.organizational_node.full_path,
-                  level: scope.organizational_node.level.name,
-                  created_at: scope.created_at
-                }
-              end
-            }
+              response_data = {
+                user_id: target_user.id,
+                user_email: target_user.email,
+                tenant_id: target_tenant.id,
+                stored_scopes: stored_scopes.map do |scope|
+                  {
+                    id: scope.organizational_node_id,
+                    name: scope.organizational_node.name,
+                    full_path: scope.organizational_node.full_path,
+                    level: scope.organizational_node.level.name,
+                    role_slug: scope.role&.slug, # Return role context
+                    created_at: scope.created_at
+                  }
+                end
+              }
 
             if params[:include_effective]
               query = OrganizationalNodesScopeQuery.new(OrganizationalNode.where(tenant_id: target_tenant.id), user: target_user)
@@ -203,12 +204,13 @@ module V1
           # PUT /users/:user_id/scopes - ACTUALIZAR SCOPES
           # ============================================
           desc "Update user's organizational scopes",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             requires :user_id, type: Integer
             optional :tenant_id, type: Integer
             requires :node_ids, type: Array[Integer]
+            optional :role_slug, type: String # New parameter to target specific role
           end
           put "users/:user_id/scopes" do
             authenticate!
@@ -217,10 +219,22 @@ module V1
 
             authorize!(:user_node_scope, :update?, policy_class: UserNodeScopePolicy)
 
-            result = ::Tenants::UserNodeScopes::UpdateService.call(
+            # Map node_ids to node_scopes structure expected by UpdateScopesService
+            node_scopes = params[:node_ids].map do |node_id|
+              {
+                organizational_node_id: node_id,
+                access_type: "read", # Default value
+                include_children: true # Default value
+              }
+            end
+
+            result = ::Tenants::Users::UpdateScopesService.call(
               user: target_user,
               tenant: target_tenant,
-              node_ids: params[:node_ids],
+              params: {
+                node_scopes: node_scopes,
+                role_slug: params[:role_slug]
+              },
               current_user: current_user
             )
 
@@ -235,7 +249,7 @@ module V1
           # DELETE /users/:user_id/scopes - LIMPIAR SCOPES
           # ============================================
           desc "Clear all user's organizational scopes",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             requires :user_id, type: Integer
@@ -265,7 +279,7 @@ module V1
           # GET /dropdown_options - OPCIONES PARA DROPDOWN
           # ============================================
           desc "Get dropdown options for organizational nodes",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             optional :tenant_id, type: Integer
@@ -299,7 +313,7 @@ module V1
           # POST /users/:user_id/scopes/validate_access - VALIDAR ACCESO
           # ============================================
           desc "Validate if user has access to specific node",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             requires :user_id, type: Integer
@@ -328,7 +342,7 @@ module V1
           # POST /users/bulk_update_scopes - ACTUALIZACIÓN MASIVA
           # ============================================
           desc "Bulk update scopes for multiple users",
-               tags: [ "Tenant - User Scopes" ],
+               tags: [ "Management - User Scopes" ],
                success: { code: 200 }
           params do
             requires :user_ids, type: Array[Integer], desc: "Array of user IDs"

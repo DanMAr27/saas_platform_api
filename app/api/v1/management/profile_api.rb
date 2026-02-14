@@ -1,18 +1,18 @@
-# app/api/v1/tenant/profile_api.rb
+# app/api/v1/management/profile_api.rb
 
 module V1
-  module Tenant
+  module Management
     class ProfileApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         # ============================================
         # INFORMACIÓN DEL TENANT ACTUAL
         # ============================================
         desc "Get current tenant information",
-              tags: [ "Tenant" ],
+              tags: [ "Management - Profile" ],
               success: { code: 200 }
         get :profile do
           authenticate!
@@ -54,7 +54,7 @@ module V1
         # MEMBRESÍA DEL USUARIO ACTUAL
         # ============================================
         desc "Get current user membership in tenant",
-              tags: [ "Tenant" ]
+              tags: [ "Management - Profile" ]
         params do
           optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
         end
@@ -93,7 +93,7 @@ module V1
         # INVITAR USUARIO
         # ============================================
         desc "Invite user to tenant",
-              tags: [ "Tenant" ]
+              tags: [ "Management - Profile" ]
         params do
           optional :tenant_id, type: Integer
           requires :email, type: String
@@ -165,7 +165,7 @@ module V1
         # ESTADÍSTICAS DEL TENANT
         # ============================================
         desc "Get tenant statistics",
-              tags: [ "Tenant" ]
+              tags: [ "Management - Profile" ]
         params do
           optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
         end

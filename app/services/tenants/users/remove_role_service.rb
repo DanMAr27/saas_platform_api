@@ -46,8 +46,18 @@ module Tenants
           membership.discard
 
           # Si este rol tenía scopes específicos (opcional: eliminarlos)
-          # En tu caso actual los scopes son por usuario-tenant, no por rol
-          # Pero podrías implementar lógica adicional aquí si es necesario
+          # Eliminamos los scopes asociados a este rol y usuario en este tenant
+          UserNodeScope.where(
+            user_id: user.id,
+            tenant_id: tenant.id,
+            role_id: membership.role_id
+          ).destroy_all
+
+          UserVehicleScope.where(
+            user_id: user.id,
+            tenant_id: tenant.id,
+            role_id: membership.role_id
+          ).destroy_all
 
           # Configurar PaperTrail
           set_paper_trail_context(role_name)

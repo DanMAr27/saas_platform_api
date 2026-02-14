@@ -1,25 +1,25 @@
-# app/api/v1/tenant/roles_api.rb
+# app/api/v1/management/roles_api.rb
 
 module V1
-  module Tenant
+  module Management
     # API para consultar roles disponibles en el tenant
     # ACTUALIZADO: Con soporte para scope flags
     class RolesApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         namespace :roles do
           # ============================================
           # LISTAR ROLES DISPONIBLES
           # ============================================
           desc "List available roles for tenant",
-                tags: [ "Tenant - Roles" ],
+                tags: [ "Management - Roles" ],
                 success: { code: 200 },
                 detail: "Returns roles that can be assigned to users in the tenant with scope requirements"
           params do
-            optional :tenant_id, type: Integer, desc: "Tenant ID (for platform admins)"
+            optional :tenant_id, type: Integer, desc: "Tenant ID (ONLY for Platform Admins; Tenant users ignore this)"
             optional :include_usage, type: Boolean, default: false, desc: "Include usage statistics"
             optional :scope_filter, type: String, values: %w[all no_scope node_scope vehicle_scope],
                      default: "all", desc: "Filter roles by scope type"
@@ -70,11 +70,11 @@ module V1
           # VER DETALLES DE ROL
           # ============================================
           desc "Get role details",
-                tags: [ "Tenant - Roles" ],
+                tags: [ "Management - Roles" ],
                 success: { code: 200 }
           params do
             requires :slug, type: String, desc: "Role slug"
-            optional :tenant_id, type: Integer
+            optional :tenant_id, type: Integer, desc: "Tenant ID (ONLY for Platform Admins)"
             optional :include_usage, type: Boolean, default: true
           end
           get ":slug" do
@@ -108,11 +108,11 @@ module V1
           # 🆕 NUEVO: OBTENER ROLES DISPONIBLES PARA ASIGNACIÓN
           # ============================================
           desc "Get roles available for user assignment",
-                tags: [ "Tenant - Roles" ],
+                tags: [ "Management - Roles" ],
                 success: { code: 200 },
                 detail: "Returns simplified role list suitable for dropdowns/selects"
           params do
-            optional :tenant_id, type: Integer
+            optional :tenant_id, type: Integer, desc: "Tenant ID (ONLY for Platform Admins)"
           end
           get "available/for_assignment" do
             authenticate!
@@ -144,7 +144,7 @@ module V1
           # 🆕 NUEVO: VALIDAR COMPATIBILIDAD ROL-SCOPE
           # ============================================
           desc "Validate role-scope compatibility",
-                tags: [ "Tenant - Roles" ],
+                tags: [ "Management - Roles" ],
                 success: { code: 200 },
                 detail: "Check if provided scopes are compatible with a role"
           params do
@@ -194,7 +194,7 @@ module V1
           # PERMISOS DE ROL (ACTUALIZADO)
           # ============================================
           desc "Get role permissions description",
-                tags: [ "Tenant - Roles" ],
+                tags: [ "Management - Roles" ],
                 success: { code: 200 },
                 detail: "Returns human-readable description of what each role can do"
           get "permissions/summary" do
@@ -294,7 +294,7 @@ module V1
           # 🆕 NUEVO: SCOPE REQUIREMENTS POR ROL
           # ============================================
           desc "Get scope requirements for all roles",
-                tags: [ "Tenant - Roles" ],
+                tags: [ "Management - Roles" ],
                 success: { code: 200 },
                 detail: "Quick reference of what scopes each role needs"
           get "scope_requirements" do
