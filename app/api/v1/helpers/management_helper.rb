@@ -1,8 +1,8 @@
-# app/api/v1/helpers/tenant_helper.rb
+# app/api/v1/helpers/management_helper.rb
 
 module V1
   module Helpers
-    module TenantHelper
+    module ManagementHelper
       # Obtener el tenant actual del contexto
       # @return [Tenant, nil]
       def current_tenant

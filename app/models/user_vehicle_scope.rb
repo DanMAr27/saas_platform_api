@@ -19,6 +19,7 @@ class UserVehicleScope < ApplicationRecord
   belongs_to :user
   belongs_to :vehicle
   belongs_to :tenant
+  belongs_to :role, optional: true
   belongs_to :created_by_user, class_name: "User", foreign_key: :created_by, optional: true
 
   # ============================================
@@ -27,7 +28,7 @@ class UserVehicleScope < ApplicationRecord
   validates :user_id, presence: true
   validates :vehicle_id, presence: true,
             uniqueness: {
-              scope: [ :user_id, :tenant_id ],
+              scope: [ :user_id, :tenant_id, :role_id ],
               conditions: -> { where(deleted_at: nil) }
             }
   validates :access_type, inclusion: { in: ACCESS_TYPES }

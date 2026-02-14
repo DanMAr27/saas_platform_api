@@ -199,6 +199,7 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.bigint "user_id", null: false
     t.bigint "organizational_node_id", null: false
     t.bigint "tenant_id", null: false
+    t.bigint "role_id"
     t.string "access_type", limit: 20, default: "read", null: false
     t.boolean "include_children", default: true, null: false
     t.bigint "created_by"
@@ -208,8 +209,9 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.datetime "updated_at", null: false
     t.index ["deleted_at"], name: "index_user_node_scopes_on_deleted_at"
     t.index ["organizational_node_id"], name: "index_user_node_scopes_on_organizational_node_id"
+    t.index ["role_id"], name: "index_user_node_scopes_on_role_id"
     t.index ["tenant_id"], name: "index_user_node_scopes_on_tenant_id"
-    t.index ["user_id", "organizational_node_id", "tenant_id"], name: "index_user_node_scopes_unique", unique: true, where: "(deleted_at IS NULL)"
+    t.index ["user_id", "organizational_node_id", "tenant_id", "role_id"], name: "index_user_node_scopes_unique", unique: true, where: "(deleted_at IS NULL)"
     t.index ["user_id"], name: "index_user_node_scopes_on_user_id"
   end
 
@@ -217,6 +219,7 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.bigint "user_id", null: false
     t.bigint "vehicle_id", null: false
     t.bigint "tenant_id", null: false
+    t.bigint "role_id"
     t.string "access_type", limit: 20, default: "read", null: false
     t.datetime "valid_from"
     t.datetime "valid_until"
@@ -226,8 +229,9 @@ ActiveRecord::Schema[8.0].define(version: 14) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["deleted_at"], name: "index_user_vehicle_scopes_on_deleted_at"
+    t.index ["role_id"], name: "index_user_vehicle_scopes_on_role_id"
     t.index ["tenant_id"], name: "index_user_vehicle_scopes_on_tenant_id"
-    t.index ["user_id", "vehicle_id", "tenant_id"], name: "index_user_vehicle_scopes_unique", unique: true, where: "(deleted_at IS NULL)"
+    t.index ["user_id", "vehicle_id", "tenant_id", "role_id"], name: "index_user_vehicle_scopes_unique", unique: true, where: "(deleted_at IS NULL)"
     t.index ["user_id"], name: "index_user_vehicle_scopes_on_user_id"
     t.index ["valid_from"], name: "index_user_vehicle_scopes_on_valid_from"
     t.index ["valid_until"], name: "index_user_vehicle_scopes_on_valid_until"
@@ -346,9 +350,11 @@ ActiveRecord::Schema[8.0].define(version: 14) do
   add_foreign_key "tenant_memberships", "users", on_delete: :cascade
   add_foreign_key "tenants", "users", column: "created_by", on_delete: :nullify
   add_foreign_key "user_node_scopes", "organizational_nodes", on_delete: :cascade
+  add_foreign_key "user_node_scopes", "roles", on_delete: :nullify
   add_foreign_key "user_node_scopes", "tenants", on_delete: :cascade
   add_foreign_key "user_node_scopes", "users", column: "created_by", on_delete: :nullify
   add_foreign_key "user_node_scopes", "users", on_delete: :cascade
+  add_foreign_key "user_vehicle_scopes", "roles", on_delete: :nullify
   add_foreign_key "user_vehicle_scopes", "tenants", on_delete: :cascade
   add_foreign_key "user_vehicle_scopes", "users", column: "created_by", on_delete: :nullify
   add_foreign_key "user_vehicle_scopes", "users", on_delete: :cascade

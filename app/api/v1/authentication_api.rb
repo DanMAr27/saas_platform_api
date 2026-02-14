@@ -11,7 +11,7 @@ module V1
       # LOGIN - PASO 1: VALIDAR CREDENCIALES
       # ============================================
       desc "User login - Step 1: Validate credentials",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Login" ],
             success: { code: 200, message: "Credentials validated" },
             failure: [
               { code: 401, message: "Invalid credentials" },
@@ -54,7 +54,7 @@ module V1
       # LOGIN - PASO 2: SELECCIONAR CONTEXTO
       # ============================================
       desc "User login - Step 2: Select context",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Login" ],
             success: { code: 200, message: "Login successful" },
             failure: [
               { code: 401, message: "Invalid session token" },
@@ -95,7 +95,7 @@ module V1
       # LOGIN - ACCESO DIRECTO (LEGACY/SIMPLIFICADO)
       # ============================================
       desc "Direct login with context (simplified)",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Login" ],
             success: { code: 200 },
             failure: [ { code: 401, message: "Invalid credentials" } ],
             detail: "Legacy endpoint: login directly with tenant_id. Use two-step flow for better UX."
@@ -171,7 +171,7 @@ module V1
       # LOGOUT
       # ============================================
       desc "User logout",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Tokens" ],
             success: { code: 200, message: "Logout successful" },
             failure: [
               { code: 401, message: "Authentication required" }
@@ -211,7 +211,7 @@ module V1
       # REFRESH TOKEN
       # ============================================
       desc "Refresh JWT token",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Tokens" ],
             success: { code: 200, message: "Token refreshed" },
             failure: [
               { code: 401, message: "Invalid or expired token" }
@@ -253,7 +253,7 @@ module V1
       # VALIDATE TOKEN
       # ============================================
       desc "Validate JWT token",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Tokens" ],
             success: { code: 200, message: "Token is valid" },
             failure: [
               { code: 401, message: "Invalid token" }
@@ -288,7 +288,7 @@ module V1
       # ME (Current User Info)
       # ============================================
       desc "Get current user information",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - User Info" ],
             success: { code: 200, message: "User information retrieved" },
             failure: [
               { code: 401, message: "Authentication required" }
@@ -325,7 +325,7 @@ module V1
       # CONTEXTOS DISPONIBLES
       # ============================================
       desc "Get available contexts for current user",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - User Info" ],
             success: { code: 200 },
             failure: [ { code: 401, message: "Authentication required" } ],
             detail: "Returns all contexts (platform and tenants) the user has access to"
@@ -347,7 +347,7 @@ module V1
       # CAMBIAR CONTEXTO (SWITCH)
       # ============================================
       desc "Switch to a different context",
-            tags: [ "Authentication" ],
+            tags: [ "Authentication - Context Switch" ],
             success: { code: 200, message: "Context switched successfully" },
             failure: [
               { code: 401, message: "Authentication required" },

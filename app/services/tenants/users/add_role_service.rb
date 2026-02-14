@@ -46,6 +46,12 @@ module Tenants
         end
 
         ActiveRecord::Base.transaction do
+          # Asignar scopes si se proporcionaron (PRIMERO, para pasar validaciones de membresía)
+          if role.requires_scope? || node_scopes.present? || vehicle_scopes.present?
+            scopes_result = assign_scopes(role)
+            return scopes_result if scopes_result.failure?
+          end
+
           # Crear nueva membresía con el rol adicional
           membership = TenantMembership.create!(
             user: user,
@@ -56,12 +62,6 @@ module Tenants
             is_default: false, # Los roles adicionales nunca son default
             created_by: current_user.id
           )
-
-          # Asignar scopes si se proporcionaron
-          if role.requires_scope?
-            scopes_result = assign_scopes
-            return scopes_result if scopes_result.failure?
-          end
 
           # Configurar PaperTrail
           set_paper_trail_context(role)
@@ -80,7 +80,7 @@ module Tenants
 
       private
 
-      def assign_scopes
+      def assign_scopes(role)
         # Asignar node scopes
         if node_scopes.present?
           node_scopes.each do |node_scope_params|
@@ -94,8 +94,9 @@ module Tenants
               user: user,
               organizational_node: node,
               tenant: tenant,
+              role: role,
               access_type: node_scope_params[:access_type] || "read",
-              include_children: node_scope_params[:include_children] != false,
+              include_children: node_scope_params.fetch(:include_children, true),
               created_by: current_user.id
             )
           end
@@ -114,6 +115,7 @@ module Tenants
               user: user,
               vehicle: vehicle,
               tenant: tenant,
+              role: role,
               access_type: vehicle_scope_params[:access_type] || "read",
               valid_from: vehicle_scope_params[:valid_from],
               valid_until: vehicle_scope_params[:valid_until],

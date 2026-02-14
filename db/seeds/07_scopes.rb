@@ -21,7 +21,13 @@ coordinator_role = Role.find_by(slug: 'fleet_coordinator')
 # HELPERS
 # ============================================
 
-def assign_node_scope(user, node, tenant, access_type: 'write', include_children: true)
+# helpers
+def assign_node_scope(user, node, tenant, role: nil, access_type: 'write', include_children: true)
+  # Si no se pasa rol, intentar inferirlo (solo si el usuario tiene un único rol compatible)
+  unless role
+    role = user.tenant_memberships.find_by(tenant: tenant)&.role
+  end
+
   UserNodeScope.create_with(
     access_type: access_type,
     include_children: include_children,
@@ -29,11 +35,17 @@ def assign_node_scope(user, node, tenant, access_type: 'write', include_children
   ).find_or_create_by!(
     user: user,
     organizational_node: node,
-    tenant: tenant
+    tenant: tenant,
+    role: role
   )
 end
 
-def assign_vehicle_scope(user, vehicle, tenant, access_type: 'drive', valid_from: nil, valid_until: nil)
+def assign_vehicle_scope(user, vehicle, tenant, role: nil, access_type: 'drive', valid_from: nil, valid_until: nil)
+  # Si no se pasa rol, intentar inferirlo
+  unless role
+    role = user.tenant_memberships.find_by(tenant: tenant)&.role
+  end
+
   UserVehicleScope.create_with(
     access_type: access_type,
     valid_from: valid_from || Time.current,
@@ -42,7 +54,8 @@ def assign_vehicle_scope(user, vehicle, tenant, access_type: 'drive', valid_from
   ).find_or_create_by!(
     user: user,
     vehicle: vehicle,
-    tenant: tenant
+    tenant: tenant,
+    role: role
   )
 end
 
@@ -108,6 +121,7 @@ active_tenants.each do |tenant|
           nodes.each do |node|
             assign_node_scope(
               membership.user, node, tenant,
+              role: membership.role,
               access_type: 'write',
               include_children: true
             )
@@ -124,6 +138,7 @@ active_tenants.each do |tenant|
             assigned_region = regions[idx % regions.size]
             assign_node_scope(
               membership.user, assigned_region, tenant,
+              role: membership.role,
               access_type: 'write',
               include_children: true # Incluye branches y departamentos
             )
@@ -137,10 +152,11 @@ active_tenants.each do |tenant|
 
             assigned_branches.each do |branch|
               assign_node_scope(
-                membership.user, branch, tenant,
-                access_type: 'write',
-                include_children: true
-              )
+              membership.user, branch, tenant,
+              role: membership.role,
+              access_type: 'write',
+              include_children: true
+            )
               stats[:node_scopes] += 1
             end
 
@@ -175,6 +191,7 @@ active_tenants.each do |tenant|
           assigned_branches.each do |branch|
             assign_node_scope(
               membership.user, branch, tenant,
+              role: membership.role,
               access_type: 'write',
               include_children: true
             )
@@ -210,6 +227,7 @@ active_tenants.each do |tenant|
             top_node = top_nodes.first
             assign_node_scope(
               membership.user, top_node, tenant,
+              role: membership.role,
               access_type: 'read',
               include_children: true # Ver todo debajo
             )
@@ -268,6 +286,7 @@ active_tenants.each do |tenant|
 
           assign_vehicle_scope(
             membership.user, vehicle, tenant,
+            role: membership.role,
             access_type: 'drive',
             valid_until: valid_until
           )
@@ -304,7 +323,7 @@ active_tenants.each do |tenant|
           # Asignar un nodo
           if nodes.any?
             node = nodes.sample
-            assign_node_scope(multi_user, node, tenant, include_children: true)
+            assign_node_scope(multi_user, node, tenant, role: membership.role, include_children: true)
             stats[:node_scopes] += 1
 
             if activate_membership(membership)
@@ -317,7 +336,7 @@ active_tenants.each do |tenant|
           # Asignar vehículos
           if vehicles.any?
             vehicles.sample(2).each do |vehicle|
-              assign_vehicle_scope(multi_user, vehicle, tenant)
+              assign_vehicle_scope(multi_user, vehicle, tenant, role: membership.role)
               stats[:vehicle_scopes] += 1
             end
 
@@ -331,7 +350,7 @@ active_tenants.each do |tenant|
           # Asignar acceso read-only
           if nodes.any?
             top_node = nodes.first
-            assign_node_scope(multi_user, top_node, tenant, access_type: 'read', include_children: true)
+            assign_node_scope(multi_user, top_node, tenant, role: membership.role, access_type: 'read', include_children: true)
             stats[:node_scopes] += 1
 
             if activate_membership(membership)

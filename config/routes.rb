@@ -12,6 +12,10 @@ Rails.application.routes.draw do
   # Accesible en: http://localhost:3000/apidoc
   mount GrapeSwaggerRails::Engine => "/apidoc"
 
+  # Redirect /swagger to /apidoc for convenience
+  get "/swagger", to: redirect("/apidoc")
+  get "/api-docs", to: redirect("/apidoc")
+
   # Health check route (fuera de la API para monitoreo)
   # Útil para load balancers y herramientas de monitoreo
   get "/health", to: proc {

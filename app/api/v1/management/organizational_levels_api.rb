@@ -1,21 +1,21 @@
-# app/api/v1/tenant/organizational_levels_api.rb
+# app/api/v1/management/organizational_levels_api.rb
 # 🆕 NUEVO ARCHIVO: API REST para gestión de niveles organizacionales
 # Separado de organizational_nodes_api para mejor organización y mantenimiento
 
 module V1
-  module Tenant
+  module Management
     class OrganizationalLevelsApi < Grape::API
       helpers Helpers::AuthenticationHelper
-      helpers Helpers::TenantHelper
+      helpers Helpers::ManagementHelper
       helpers Helpers::AuthorizationHelper
 
-      namespace :tenant do
+      namespace :management do
         namespace :organizational_levels do
           # ============================================
           # LISTAR NIVELES
           # ============================================
           desc "List organizational levels",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 success: { code: 200 },
                 detail: "Returns all organizational hierarchy levels configured for the tenant"
           params do
@@ -62,7 +62,7 @@ module V1
           # VER NIVEL
           # ============================================
           desc "Get organizational level details",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer, desc: "Level ID"
@@ -88,7 +88,7 @@ module V1
           # CREAR NIVEL
           # ============================================
           desc "Create organizational level",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 success: { code: 201 },
                 detail: "Creates a new hierarchy level. Only admins can create levels."
           params do
@@ -143,7 +143,7 @@ module V1
           # ACTUALIZAR NIVEL
           # ============================================
           desc "Update organizational level",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 success: { code: 200 }
           params do
             requires :id, type: Integer
@@ -186,7 +186,7 @@ module V1
           # ELIMINAR NIVEL
           # ============================================
           desc "Delete organizational level",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 success: { code: 200 },
                 detail: "Soft deletes a level. Cannot delete if nodes exist at this level."
           params do
@@ -221,7 +221,7 @@ module V1
           # ✏️ CORREGIDO: Sintaxis correcta de params para Grape
           # ============================================
           desc "Reorder organizational levels",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 success: { code: 200 },
                 detail: "Updates the hierarchical order of multiple levels at once"
           params do
@@ -261,7 +261,7 @@ module V1
           # 🆕 NUEVO: ESTADÍSTICAS DE NIVELES
           # ============================================
           desc "Get level usage statistics",
-                tags: [ "Tenant - Organizational Levels" ],
+                tags: [ "Management - Organizational Levels" ],
                 detail: "Returns statistics about how many nodes exist at each level"
           params do
             optional :tenant_id, type: Integer

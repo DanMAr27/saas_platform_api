@@ -486,7 +486,6 @@ enterprise = Tenant.create_with(
     sso_enabled: true
   }
 ).find_or_create_by!(slug: 'enterprise-mega')
-
 puts "    ✓ Enterprise Solutions Mega Corp (ACTIVE - Enterprise Plan)"
 
 # ============ ADMIN (Enterprise) ============

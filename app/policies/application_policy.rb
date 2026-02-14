@@ -131,6 +131,10 @@ class ApplicationPolicy
     def super_admin?
       user&.super_admin?
     end
+
+    def support_admin?
+      user&.support_admin?
+    end
   end
 
   private

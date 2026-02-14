@@ -5,7 +5,7 @@ module Tenants
     class UpdateScopesService
       include ServiceResultHelper
 
-      attr_reader :user, :tenant, :params, :current_user
+      attr_reader :user, :tenant, :params, :current_user, :target_role
 
       def initialize(user:, tenant:, params:, current_user:)
         @user = user
@@ -57,7 +57,27 @@ module Tenants
       private
 
       def validate_scope_requirements
-        # Obtener todos los roles activos del usuario en el tenant
+        # Si se especifica un rol, validar que el usuario lo tenga
+        if params[:role_slug].present?
+          @target_role = Role.tenant_roles.find_by(slug: params[:role_slug])
+          unless @target_role
+            return failure(errors: "Invalid role: #{params[:role_slug]}")
+          end
+
+          # Verificar que el usuario tenga este rol en el tenant
+          unless user.tenant_memberships.where(tenant_id: tenant.id, role_id: @target_role.id).exists?
+            return failure(errors: "User does not have the role '#{@target_role.name}' in this tenant")
+          end
+
+          # Verificar si este rol específico requiere scopes
+          if @target_role.requires_scope? && params[:node_scopes].blank? && params[:vehicle_scopes].blank?
+            return failure(errors: "Role '#{@target_role.name}' requires at least one scope assignment")
+          end
+
+          return success(data: { valid: true })
+        end
+
+        # Comportamiento legacy/global: Obtener todos los roles activos
         user_roles = user.tenant_memberships
                         .where(tenant_id: tenant.id)
                         .active
@@ -82,8 +102,10 @@ module Tenants
       end
 
       def update_node_scopes
-        # Eliminar scopes actuales
-        user.user_node_scopes.where(tenant_id: tenant.id).destroy_all
+        # Eliminar scopes actuales (filtrado por rol si se especifica)
+        scope_query = user.user_node_scopes.where(tenant_id: tenant.id)
+        scope_query = scope_query.where(role_id: @target_role.id) if @target_role
+        scope_query.destroy_all
 
         # Crear nuevos scopes
         params[:node_scopes].each do |node_scope_params|
@@ -97,6 +119,7 @@ module Tenants
             user: user,
             organizational_node: node,
             tenant: tenant,
+            role: @target_role, # Puede ser nil si no se especifica
             access_type: node_scope_params[:access_type] || "read",
             include_children: node_scope_params.fetch(:include_children, true),
             created_by: current_user.id
@@ -111,8 +134,10 @@ module Tenants
       end
 
       def update_vehicle_scopes
-        # Eliminar scopes actuales
-        user.user_vehicle_scopes.where(tenant_id: tenant.id).destroy_all
+        # Eliminar scopes actuales (filtrado por rol si se especifica)
+        scope_query = user.user_vehicle_scopes.where(tenant_id: tenant.id)
+        scope_query = scope_query.where(role_id: @target_role.id) if @target_role
+        scope_query.destroy_all
 
         # Crear nuevos scopes
         params[:vehicle_scopes].each do |vehicle_scope_params|
@@ -126,6 +151,7 @@ module Tenants
             user: user,
             vehicle: vehicle,
             tenant: tenant,
+            role: @target_role, # Puede ser nil
             access_type: vehicle_scope_params[:access_type] || "read",
             valid_from: vehicle_scope_params[:valid_from],
             valid_until: vehicle_scope_params[:valid_until],
