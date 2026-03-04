@@ -78,7 +78,7 @@ group :development, :test do
   gem "rubocop-rails-omakase", require: false
 
   # Variables de entorno
-  gem "dotenv-rails", "~> 3.1"
+  gem "dotenv-rails", "~> 3.2"
 end
 
 group :development do
